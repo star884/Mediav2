@@ -18,7 +18,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "MyCloudstreamRepo"
 
-// Include all 6 extensions requested from Phisherrepo & CSX
 include(":StreamPlay")
 include(":Moviebox")
 include(":HDHUB4K")
