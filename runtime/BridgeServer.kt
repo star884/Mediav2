@@ -17,14 +17,14 @@ import java.net.http.HttpResponse
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.security.MessageDigest
+import java.time.Duration
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 
 private val mapper = jacksonObjectMapper()
 
 private val http = HttpClient.newBuilder()
     .followRedirects(HttpClient.Redirect.NORMAL)
-    .connectTimeout(java.time.Duration.ofSeconds(20))
+    .connectTimeout(Duration.ofSeconds(20))
     .build()
 
 private val scope = CoroutineScope(
@@ -39,12 +39,17 @@ private val loadedPlugins =
 private val aliases = mapOf(
     "moviebox" to "MovieBox",
     "movie box" to "MovieBox",
+    "movieboxprovider" to "MovieBox",
     "4khdhub" to "4KHDHUB",
     "4k hd hub" to "4KHDHUB",
+    "4khdhubprovider" to "4KHDHUB",
     "anidb" to "AniDB",
+    "anidbprovider" to "AniDB",
     "animepahe" to "AnimePahe",
+    "animepaheprovider" to "AnimePahe",
     "cinestream" to "CineStream",
     "cine stream" to "CineStream",
+    "cinestreamprovider" to "CineStream",
     "streamplay" to "StreamPlay"
 )
 
@@ -70,7 +75,8 @@ private val repositories =
         ?.filter { it.isNotBlank() }
         ?: listOf(
             "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json",
-            "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json"
+            "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json",
+            "https://raw.githubusercontent.com/tpadev/phiser-streamplay/builds/repo.json"
         )
 
 private val pluginDirectory =
@@ -80,7 +86,11 @@ private val pluginDirectory =
     )
 
 private val port =
-    System.getenv("PORT")?.toIntOrNull() ?: 10000
+    System.getenv("CLOUDSTREAM_RUNTIME_PORT")
+        ?.toIntOrNull()
+        ?: System.getenv("PORT")
+            ?.toIntOrNull()
+        ?: 10001
 
 private val requestTimeout =
     System.getenv("CLOUDSTREAM_RUNTIME_TIMEOUT")
@@ -107,6 +117,7 @@ private data class SearchItem(
     val name: String,
     val url: String,
     val provider: String,
+    val providerId: String,
     val type: String?,
     val posterUrl: String?,
     val year: Int?
@@ -158,18 +169,20 @@ private fun response(
         "GET,POST,OPTIONS"
     )
 
-    exchange.sendResponseHeaders(status, bytes.size.toLong())
+    exchange.sendResponseHeaders(
+        status,
+        bytes.size.toLong()
+    )
 
     exchange.responseBody.use {
         it.write(bytes)
     }
 }
 
-private fun body(exchange: HttpExchange): JsonNode {
-    return mapper.readTree(
+private fun body(exchange: HttpExchange): JsonNode =
+    mapper.readTree(
         exchange.requestBody.readBytes()
     )
-}
 
 private fun getText(
     node: JsonNode,
@@ -188,15 +201,29 @@ private fun getInt(
         ?.takeIf { !it.isNull }
         ?.asInt()
 
-private fun normalizedName(name: String): String {
-    val lower = name.trim().lowercase()
+private fun normalizedName(
+    value: String
+): String {
+    val normalized = value
+        .trim()
+        .lowercase()
+        .replace(
+            Regex("[^a-z0-9]"),
+            ""
+        )
 
-    return aliases[lower]
-        ?: name.trim()
+    return aliases[normalized]
+        ?.lowercase()
+        ?.replace(
+            Regex("[^a-z0-9]"),
+            ""
+        )
+        ?: normalized
 }
 
 private fun sha256(file: File): String {
-    val digest = MessageDigest.getInstance("SHA-256")
+    val digest =
+        MessageDigest.getInstance("SHA-256")
 
     file.inputStream().use { input ->
         val buffer = ByteArray(64 * 1024)
@@ -207,7 +234,11 @@ private fun sha256(file: File): String {
             if (count <= 0)
                 break
 
-            digest.update(buffer, 0, count)
+            digest.update(
+                buffer,
+                0,
+                count
+            )
         }
     }
 
@@ -223,32 +254,44 @@ private fun download(
 ) {
     destination.parentFile?.mkdirs()
 
-    val request = HttpRequest.newBuilder()
-        .uri(URI(url))
-        .timeout(java.time.Duration.ofMinutes(5))
-        .GET()
-        .build()
+    val request =
+        HttpRequest.newBuilder()
+            .uri(URI(url))
+            .timeout(
+                Duration.ofMinutes(5)
+            )
+            .header(
+                "User-Agent",
+                "Mediav2-CloudStream-Runtime/2.0"
+            )
+            .GET()
+            .build()
 
-    val response = http.send(
-        request,
-        HttpResponse.BodyHandlers.ofByteArray()
-    )
+    val result =
+        http.send(
+            request,
+            HttpResponse.BodyHandlers.ofByteArray()
+        )
 
-    if (response.statusCode() !in 200..299) {
+    if (result.statusCode() !in 200..299) {
         error(
-            "Download failed: HTTP ${response.statusCode()} $url"
+            "Plugin download failed: HTTP ${result.statusCode()} $url"
+        )
+    }
+
+    if (result.body().isEmpty()) {
+        error(
+            "Plugin download returned an empty file: $url"
         )
     }
 
     val temporary =
-        File(destination.parentFile, ".${destination.name}.tmp")
+        File(
+            destination.parentFile,
+            ".${destination.name}.tmp"
+        )
 
-    temporary.writeBytes(response.body())
-
-    if (temporary.length() <= 0) {
-        temporary.delete()
-        error("Downloaded plugin is empty: $url")
-    }
+    temporary.writeBytes(result.body())
 
     if (destination.exists()) {
         destination.delete()
@@ -262,51 +305,107 @@ private fun download(
     }
 }
 
-private fun getJson(url: String): JsonNode {
-    val request = HttpRequest.newBuilder()
-        .uri(URI(url))
-        .timeout(java.time.Duration.ofSeconds(30))
-        .header(
-            "User-Agent",
-            "Mediav2-CloudStream-Runtime/1.0"
+private fun getJson(
+    url: String
+): JsonNode {
+    val request =
+        HttpRequest.newBuilder()
+            .uri(URI(url))
+            .timeout(
+                Duration.ofSeconds(45)
+            )
+            .header(
+                "User-Agent",
+                "Mediav2-CloudStream-Runtime/2.0"
+            )
+            .header(
+                "Accept",
+                "application/json"
+            )
+            .GET()
+            .build()
+
+    val result =
+        http.send(
+            request,
+            HttpResponse.BodyHandlers.ofString()
         )
-        .GET()
-        .build()
 
-    val response = http.send(
-        request,
-        HttpResponse.BodyHandlers.ofString()
-    )
-
-    if (response.statusCode() !in 200..299) {
+    if (result.statusCode() !in 200..299) {
         error(
-            "Repository request failed: HTTP ${response.statusCode()} $url"
+            "Repository request failed: HTTP ${result.statusCode()} $url"
         )
     }
 
-    return mapper.readTree(response.body())
+    return mapper.readTree(
+        result.body()
+    )
 }
 
 private fun resolveUrl(
     base: String,
     value: String
-): String {
-    return try {
+): String =
+    try {
         URI(base)
             .resolve(value)
             .toString()
     } catch (_: Throwable) {
         value
     }
+
+private fun addPluginNode(
+    repositoryUrl: String,
+    node: JsonNode,
+    output: MutableList<PluginSpec>
+) {
+    val name =
+        getText(node, "name")
+            ?: getText(
+                node,
+                "internalName"
+            )
+            ?: return
+
+    val internalName =
+        getText(
+            node,
+            "internalName"
+        )
+            ?: name
+
+    val pluginUrl =
+        getText(node, "url")
+            ?: getText(node, "file")
+            ?: return
+
+    val version =
+        getInt(
+            node,
+            "version"
+        )
+            ?: 0
+
+    output += PluginSpec(
+        name = name,
+        internalName = internalName,
+        url = resolveUrl(
+            repositoryUrl,
+            pluginUrl
+        ),
+        version = version,
+        repository = repositoryUrl
+    )
 }
 
 private fun readPluginSpecs(
     repositoryUrl: String
 ): List<PluginSpec> {
+    val root =
+        getJson(repositoryUrl)
 
-    val root = getJson(repositoryUrl)
-
-    val result = mutableListOf<PluginSpec>()
+    val result =
+        mutableListOf<PluginSpec>()
 
     fun readManifest(
         url: String,
@@ -324,25 +423,35 @@ private fun readPluginSpecs(
             return
         }
 
-        val pluginLists = node.get("pluginLists")
+        val pluginLists =
+            node.get("pluginLists")
 
         if (pluginLists?.isArray == true) {
             pluginLists.forEach {
-                val child = it.asText()
+                val child =
+                    it.asText()
 
                 val childUrl =
-                    resolveUrl(url, child)
+                    resolveUrl(
+                        url,
+                        child
+                    )
 
                 runCatching {
                     readManifest(
                         childUrl,
                         getJson(childUrl)
                     )
+                }.onFailure { error ->
+                    println(
+                        "Plugin list failed: $childUrl -> ${error.message}"
+                    )
                 }
             }
         }
 
-        val plugins = node.get("plugins")
+        val plugins =
+            node.get("plugins")
 
         if (plugins?.isArray == true) {
             plugins.forEach {
@@ -355,44 +464,12 @@ private fun readPluginSpecs(
         }
     }
 
-    readManifest(repositoryUrl, root)
+    readManifest(
+        repositoryUrl,
+        root
+    )
 
     return result
-}
-
-private fun addPluginNode(
-    repositoryUrl: String,
-    node: JsonNode,
-    output: MutableList<PluginSpec>
-) {
-    val name =
-        getText(node, "name")
-            ?: getText(node, "internalName")
-            ?: return
-
-    val internalName =
-        getText(node, "internalName")
-            ?: name
-
-    val pluginUrl =
-        getText(node, "url")
-            ?: getText(node, "file")
-            ?: return
-
-    val version =
-        getInt(node, "version")
-            ?: 0
-
-    output += PluginSpec(
-        name = name,
-        internalName = internalName,
-        url = resolveUrl(
-            repositoryUrl,
-            pluginUrl
-        ),
-        version = version,
-        repository = repositoryUrl
-    )
 }
 
 private fun matchesRequested(
@@ -401,18 +478,13 @@ private fun matchesRequested(
     if (requestedExtensions.isEmpty())
         return true
 
-    val candidates = listOf(
+    return listOf(
         spec.name,
         spec.internalName
-    )
-
-    return candidates.any { candidate ->
+    ).any { candidate ->
         requestedExtensions.any { wanted ->
-            normalizedName(candidate)
-                .equals(
-                    normalizedName(wanted),
-                    ignoreCase = true
-                )
+            normalizedName(candidate) ==
+                normalizedName(wanted)
         }
     }
 }
@@ -430,7 +502,7 @@ private fun pluginFileName(
     return "$safe.cs3"
 }
 
-private fun installedVersionFile(
+private fun metadataFile(
     spec: PluginSpec
 ): File =
     File(
@@ -443,12 +515,12 @@ private fun syncPlugins(): List<PluginSpec> {
 
     val all =
         repositories
-            .flatMap { repo ->
+            .flatMap { repository ->
                 runCatching {
-                    readPluginSpecs(repo)
+                    readPluginSpecs(repository)
                 }.getOrElse {
                     println(
-                        "Repository failed: $repo -> ${it.message}"
+                        "Repository failed: $repository -> ${it.message}"
                     )
 
                     emptyList()
@@ -467,7 +539,7 @@ private fun syncPlugins(): List<PluginSpec> {
             )
 
         val metadata =
-            installedVersionFile(spec)
+            metadataFile(spec)
 
         val installedVersion =
             runCatching {
@@ -483,144 +555,229 @@ private fun syncPlugins(): List<PluginSpec> {
             !file.exists() ||
                 installedVersion < spec.version
 
-        if (needsDownload) {
-            println(
-                "Downloading ${spec.name} v${spec.version}"
+        if (!needsDownload)
+            continue
+
+        println(
+            "Downloading ${spec.name} v${spec.version}"
+        )
+
+        runCatching {
+            download(
+                spec.url,
+                file
             )
 
-            runCatching {
-                download(
-                    spec.url,
-                    file
-                )
-
-                val checksum =
-                    sha256(file)
-
-                metadata.writeText(
-                    mapper.writeValueAsString(
-                        mapOf(
-                            "name" to spec.name,
-                            "internalName" to spec.internalName,
-                            "version" to spec.version,
-                            "url" to spec.url,
-                            "sha256" to checksum,
-                            "repository" to spec.repository
-                        )
+            metadata.writeText(
+                mapper.writeValueAsString(
+                    mapOf(
+                        "name" to spec.name,
+                        "internalName" to
+                            spec.internalName,
+                        "version" to
+                            spec.version,
+                        "url" to
+                            spec.url,
+                        "sha256" to
+                            sha256(file),
+                        "repository" to
+                            spec.repository
                     )
                 )
-            }.onFailure {
-                println(
-                    "Plugin download failed: ${spec.name}: ${it.message}"
-                )
-            }
+            )
+        }.onFailure {
+            println(
+                "Plugin download failed: ${spec.name}: ${it.message}"
+            )
         }
     }
 
     return all
 }
 
-private fun loadInstalledPlugins() {
-    synchronized(pluginLock) {
-        pluginDirectory
-            .walkTopDown()
-            .filter {
-                it.isFile &&
-                    (
-                        it.extension.equals(
-                            "cs3",
-                            true
-                        ) ||
-                        it.extension.equals(
-                            "jar",
-                            true
-                        )
-                    )
-            }
-            .forEach { file ->
+private fun loadPlugin(
+    file: File
+): Boolean {
+    return try {
+        ExtensionLoader.loadAndInit(
+            file
+        )
 
-                if (loadedPlugins.containsKey(file.absolutePath))
-                    return@forEach
+        loadedPlugins[
+            file.absolutePath
+        ] = file
 
-                try {
-                    ExtensionLoader.loadAndInit(
-                        file
-                    )
+        println(
+            "Loaded plugin: ${file.name}"
+        )
 
-                    loadedPlugins[
-                        file.absolutePath
-                    ] = file
+        true
+    } catch (error: Throwable) {
+        println(
+            "Plugin failed: ${file.name}: ${error.message}"
+        )
 
-                    println(
-                        "Loaded plugin: ${file.name}"
-                    )
-                } catch (error: Throwable) {
-                    println(
-                        "Plugin failed: ${file.name}: ${error.message}"
-                    )
-                }
-            }
+        false
     }
 }
 
-private fun providers(): List<MainAPI> {
+private fun loadInstalledPlugins() {
+    synchronized(pluginLock) {
+        val files =
+            pluginDirectory
+                .walkTopDown()
+                .filter {
+                    it.isFile &&
+                        (
+                            it.extension.equals(
+                                "cs3",
+                                true
+                            ) ||
+                            it.extension.equals(
+                                "jar",
+                                true
+                            )
+                        )
+                }
+                .filter {
+                    !it.name.endsWith(
+                        "-jvm.jar",
+                        true
+                    )
+                }
+                .sortedBy {
+                    it.lastModified()
+                }
+                .toList()
+
+        if (files.isEmpty()) {
+            println(
+                "No CloudStream plugins installed."
+            )
+            return
+        }
+
+        val retry =
+            mutableListOf<File>()
+
+        var loaded = 0
+
+        for (file in files) {
+            if (
+                loadedPlugins.containsKey(
+                    file.absolutePath
+                )
+            ) {
+                continue
+            }
+
+            if (loadPlugin(file)) {
+                loaded++
+            } else {
+                retry += file
+
+                runCatching {
+                    ExtensionLoader.unloadPlugin(
+                        file.absolutePath
+                    )
+                }
+            }
+        }
+
+        for (file in retry) {
+            runCatching {
+                ExtensionLoader.unloadPlugin(
+                    file.absolutePath
+                )
+            }
+
+            if (loadPlugin(file)) {
+                loaded++
+            }
+        }
+
+        println(
+            "CloudStream plugins loaded: $loaded/${files.size}"
+        )
+    }
+}
+
+private fun providers(): List<MainAPI> =
     synchronized(APIHolder.allProviders) {
-        return APIHolder.allProviders
+        APIHolder.allProviders
             .distinctBy {
                 it.javaClass.name
             }
             .toList()
     }
-}
 
 private fun providerFor(
     node: JsonNode
 ): MainAPI? {
     val providerName =
-        getText(node, "providerName")
+        getText(
+            node,
+            "providerName"
+        )
 
     val providerId =
-        getText(node, "providerId")
+        getText(
+            node,
+            "providerId"
+        )
 
     val url =
-        getText(node, "url")
+        getText(
+            node,
+            "url"
+        )
 
-    return providers().firstOrNull { api ->
-        (
-            providerName != null &&
-                api.name.equals(
-                    providerName,
-                    true
-                )
-            ) ||
+    return providers()
+        .firstOrNull { api ->
             (
-                providerId != null &&
+                providerName != null &&
                     (
                         api.name.equals(
-                            providerId,
+                            providerName,
                             true
                         ) ||
-                        api.javaClass.simpleName.equals(
-                            providerId,
+                        normalizedName(api.name) ==
+                            normalizedName(providerName)
+                    )
+                ) ||
+                (
+                    providerId != null &&
+                        (
+                            api.name.equals(
+                                providerId,
+                                true
+                            ) ||
+                            api.javaClass.simpleName.equals(
+                                providerId,
+                                true
+                            )
+                        )
+                    ) ||
+                (
+                    url != null &&
+                        api.mainUrl.isNotBlank() &&
+                        url.startsWith(
+                            api.mainUrl,
                             true
                         )
                     )
-                ) ||
-            (
-                url != null &&
-                    url.startsWith(
-                        api.mainUrl,
-                        true
-                    )
-                )
-    }
+        }
 }
+
+private fun providerId(
+    api: MainAPI
+): String =
+    api.javaClass.simpleName
 
 private fun searchProvider(
     api: MainAPI,
     query: String
 ): List<SearchItem> {
-
     return try {
         val results =
             runBlocking {
@@ -635,7 +792,6 @@ private fun searchProvider(
             }
 
         results.map { item ->
-
             val year =
                 when (item) {
                     is MovieSearchResponse ->
@@ -655,6 +811,7 @@ private fun searchProvider(
                 name = item.name,
                 url = item.url,
                 provider = api.name,
+                providerId = providerId(api),
                 type = item.type?.name,
                 posterUrl = item.posterUrl,
                 year = year
@@ -669,35 +826,35 @@ private fun searchProvider(
     }
 }
 
+private fun selectedProviders(
+    requested: List<String>
+): List<MainAPI> {
+    val all =
+        providers()
+
+    if (requested.isEmpty())
+        return all
+
+    return all.filter { api ->
+        requested.any { wanted ->
+            normalizedName(wanted) ==
+                normalizedName(api.name)
+        } ||
+            requested.any { wanted ->
+                normalizedName(wanted) ==
+                    normalizedName(
+                        api.javaClass.simpleName
+                    )
+            }
+    }
+}
+
 private fun searchAll(
     query: String,
     requested: List<String>
-): List<SearchItem> {
-
-    val selected =
-        providers()
-            .filter { api ->
-                requested.isEmpty() ||
-                    requested.any {
-                        normalizedName(it)
-                            .equals(
-                                normalizedName(api.name),
-                                true
-                            )
-                    } ||
-                    requested.any {
-                        normalizedName(it)
-                            .equals(
-                                normalizedName(
-                                    api.javaClass.simpleName
-                                ),
-                                true
-                            )
-                    }
-            }
-
-    return runBlocking {
-        selected
+): List<SearchItem> =
+    runBlocking {
+        selectedProviders(requested)
             .map { api ->
                 async(Dispatchers.IO) {
                     searchProvider(
@@ -709,31 +866,27 @@ private fun searchAll(
             .awaitAll()
             .flatten()
             .distinctBy {
-                "${it.provider}|${it.url}"
+                "${it.providerId}|${it.url}"
             }
     }
-}
 
 private fun loadResponse(
     api: MainAPI,
     url: String
-): LoadResponse? {
-    return runBlocking {
+): LoadResponse? =
+    runBlocking {
         withTimeoutOrNull(
             requestTimeout
         ) {
             api.load(url)
         }
     }
-}
 
 private fun extractEpisodes(
     response: LoadResponse
-): List<EpisodeItem> {
-
-    return when (response) {
-
-        is MovieLoadResponse -> {
+): List<EpisodeItem> =
+    when (response) {
+        is MovieLoadResponse ->
             listOf(
                 EpisodeItem(
                     name = response.name,
@@ -743,9 +896,8 @@ private fun extractEpisodes(
                     posterUrl = response.posterUrl
                 )
             )
-        }
 
-        is TvSeriesLoadResponse -> {
+        is TvSeriesLoadResponse ->
             response.episodes.map {
                 EpisodeItem(
                     name = it.name,
@@ -755,9 +907,8 @@ private fun extractEpisodes(
                     posterUrl = it.posterUrl
                 )
             }
-        }
 
-        is AnimeLoadResponse -> {
+        is AnimeLoadResponse ->
             response.episodes
                 .values
                 .flatten()
@@ -770,9 +921,8 @@ private fun extractEpisodes(
                         posterUrl = it.posterUrl
                     )
                 }
-        }
 
-        is LiveStreamLoadResponse -> {
+        is LiveStreamLoadResponse ->
             listOf(
                 EpisodeItem(
                     name = response.name,
@@ -782,48 +932,59 @@ private fun extractEpisodes(
                     posterUrl = response.posterUrl
                 )
             )
-        }
 
-        else -> emptyList()
+        else ->
+            emptyList()
     }
-}
 
 private fun loadDto(
     api: MainAPI,
     response: LoadResponse
 ): Map<String, Any?> {
-
     val episodes =
         extractEpisodes(response)
+
+    val firstData =
+        episodes
+            .firstOrNull()
+            ?.data
 
     return mapOf(
         "name" to response.name,
         "url" to response.url,
         "provider" to api.name,
+        "providerId" to providerId(api),
         "type" to response.type.name,
         "posterUrl" to response.posterUrl,
-        "backgroundPosterUrl" to response.backgroundPosterUrl,
+        "backgroundPosterUrl" to
+            response.backgroundPosterUrl,
         "year" to response.year,
         "plot" to response.plot,
+        "data" to firstData,
         "episodes" to episodes
     )
 }
 
 private fun sourceType(
     link: ExtractorLink
-): String {
-    return when (link.type.name.uppercase()) {
-        "M3U8" -> "hls"
-        "DASH" -> "dash"
-        else -> "video"
+): String =
+    when (
+        link.type.name.uppercase()
+    ) {
+        "M3U8" ->
+            "hls"
+
+        "DASH" ->
+            "dash"
+
+        else ->
+            "video"
     }
-}
 
 private fun sourceDto(
     link: ExtractorLink,
     provider: String
 ): SourceItem {
-
     val headers =
         link.headers.toMutableMap()
 
@@ -846,7 +1007,9 @@ private fun sourceDto(
         url = link.url,
         referer =
             link.referer
-                .takeIf { it.isNotBlank() },
+                .takeIf {
+                    it.isNotBlank()
+                },
         quality = link.quality,
         type = sourceType(link),
         headers = headers
@@ -857,6 +1020,8 @@ private fun getSources(
     api: MainAPI,
     data: String
 ): List<SourceItem> {
+    if (data.isBlank())
+        return emptyList()
 
     val links =
         mutableListOf<ExtractorLink>()
@@ -881,12 +1046,8 @@ private fun getSources(
 
         links
             .filter {
-                it.url.startsWith(
-                    "http://"
-                ) ||
-                    it.url.startsWith(
-                        "https://"
-                    )
+                it.url.startsWith("http://") ||
+                    it.url.startsWith("https://")
             }
             .distinctBy {
                 "${it.url}|${it.quality}"
@@ -897,9 +1058,7 @@ private fun getSources(
                     api.name
                 )
             }
-
     } catch (error: Throwable) {
-
         println(
             "loadLinks failed: ${api.name}: ${error.message}"
         )
@@ -911,7 +1070,8 @@ private fun getSources(
 private fun route(
     exchange: HttpExchange
 ) {
-    if (exchange.requestMethod.equals(
+    if (
+        exchange.requestMethod.equals(
             "OPTIONS",
             true
         )
@@ -924,54 +1084,58 @@ private fun route(
         return
     }
 
-    val path =
-        exchange.requestURI.path
-
     try {
-        when {
-
-            path == "/health" -> {
+        when (
+            exchange.requestURI.path
+        ) {
+            "/health" -> {
                 response(
                     exchange,
                     200,
                     mapOf(
                         "ok" to true,
-                        "runtime" to "Mediav2 CloudStream JVM Runtime",
-                        "providers" to providers().size,
-                        "plugins" to loadedPlugins.size
+                        "runtime" to
+                            "Mediav2 CloudStream JVM Runtime",
+                        "providers" to
+                            providers().size,
+                        "plugins" to
+                            loadedPlugins.size,
+                        "providerNames" to
+                            providers().map {
+                                it.name
+                            }
                     )
                 )
             }
 
-            path == "/providers" -> {
-
-                val list =
-                    providers().map {
-                        ProviderInfo(
-                            name = it.name,
-                            className =
-                                it.javaClass.simpleName,
-                            plugin = it.sourcePlugin,
-                            mainUrl = it.mainUrl,
-                            types =
-                                it.supportedTypes
-                                    .map { type ->
-                                        type.name
-                                    }
-                        )
-                    }
-
+            "/providers" -> {
                 response(
                     exchange,
                     200,
                     mapOf(
-                        "providers" to list
+                        "providers" to
+                            providers().map {
+                                ProviderInfo(
+                                    name = it.name,
+                                    className =
+                                        it.javaClass.simpleName,
+                                    plugin =
+                                        it.sourcePlugin,
+                                    mainUrl =
+                                        it.mainUrl,
+                                    types =
+                                        it.supportedTypes
+                                            .map {
+                                                type ->
+                                                type.name
+                                            }
+                                )
+                            }
                     )
                 )
             }
 
-            path == "/search" -> {
-
+            "/search" -> {
                 val node =
                     body(exchange)
 
@@ -983,9 +1147,13 @@ private fun route(
 
                 val requested =
                     node.get("extensions")
-                        ?.takeIf { it.isArray }
+                        ?.takeIf {
+                            it.isArray
+                        }
                         ?.map {
-                            it.asText()
+                            it.get("name")
+                                ?.asText()
+                                ?: it.asText()
                         }
                         ?: emptyList()
 
@@ -994,29 +1162,27 @@ private fun route(
                         exchange,
                         200,
                         mapOf(
-                            "results" to emptyList<SearchItem>()
+                            "results" to
+                                emptyList<SearchItem>()
                         )
                     )
                     return
                 }
 
-                val results =
-                    searchAll(
-                        query,
-                        requested
-                    )
-
                 response(
                     exchange,
                     200,
                     mapOf(
-                        "results" to results
+                        "results" to
+                            searchAll(
+                                query,
+                                requested
+                            )
                     )
                 )
             }
 
-            path == "/load" -> {
-
+            "/load" -> {
                 val node =
                     body(exchange)
 
@@ -1029,7 +1195,11 @@ private fun route(
                         404,
                         mapOf(
                             "error" to
-                                "CloudStream provider not found"
+                                "CloudStream provider not found",
+                            "availableProviders" to
+                                providers().map {
+                                    it.name
+                                }
                         )
                     )
                     return
@@ -1065,7 +1235,9 @@ private fun route(
                         404,
                         mapOf(
                             "error" to
-                                "Provider returned no LoadResponse"
+                                "Provider returned no LoadResponse",
+                            "provider" to
+                                api.name
                         )
                     )
                     return
@@ -1081,8 +1253,7 @@ private fun route(
                 )
             }
 
-            path == "/sources" -> {
-
+            "/sources" -> {
                 val node =
                     body(exchange)
 
@@ -1119,129 +1290,114 @@ private fun route(
                     return
                 }
 
-                val sources =
-                    getSources(
-                        api,
-                        data
-                    )
-
                 response(
                     exchange,
                     200,
                     mapOf(
-                        "sources" to sources
+                        "sources" to
+                            getSources(
+                                api,
+                                data
+                            )
                     )
                 )
             }
 
-            path == "/home" -> {
+            "/home" -> {
+                val node =
+                    body(exchange)
 
                 val requested =
-                    body(exchange)
-                        .get("extensions")
-                        ?.takeIf { it.isArray }
+                    node.get("extensions")
+                        ?.takeIf {
+                            it.isArray
+                        }
                         ?.map {
-                            it.asText()
+                            it.get("name")
+                                ?.asText()
+                                ?: it.asText()
                         }
                         ?: emptyList()
 
-                val selected =
-                    providers()
-                        .filter { api ->
-                            requested.isEmpty() ||
-                                requested.any {
-                                    normalizedName(it)
-                                        .equals(
-                                            normalizedName(
-                                                api.name
-                                            ),
-                                            true
-                                        )
-                                }
-                        }
-
                 val result =
                     runBlocking {
+                        selectedProviders(requested)
+                            .map { api ->
+                                async(Dispatchers.IO) {
+                                    try {
+                                        if (!api.hasMainPage)
+                                            return@async emptyList<SearchItem>()
 
-                        selected.map { api ->
-                            async(Dispatchers.IO) {
+                                        val output =
+                                            mutableListOf<SearchItem>()
 
-                                try {
-
-                                    if (!api.hasMainPage)
-                                        return@async emptyList<SearchItem>()
-
-                                    val pages =
-                                        api.mainPage
-
-                                    val output =
-                                        mutableListOf<SearchItem>()
-
-                                    for (page in pages.take(3)) {
-
-                                        val home =
-                                            withTimeoutOrNull(
-                                                requestTimeout
-                                            ) {
-                                                api.getMainPage(
-                                                    1,
-                                                    MainPageRequest(
-                                                        page.name,
-                                                        page.data,
-                                                        page.horizontalImages
+                                        for (
+                                            page in
+                                            api.mainPage.take(3)
+                                        ) {
+                                            val home =
+                                                withTimeoutOrNull(
+                                                    requestTimeout
+                                                ) {
+                                                    api.getMainPage(
+                                                        1,
+                                                        MainPageRequest(
+                                                            page.name,
+                                                            page.data,
+                                                            page.horizontalImages
+                                                        )
                                                     )
-                                                )
-                                            }
+                                                }
 
-                                        home
-                                            ?.items
-                                            ?.flatMap {
-                                                it.list
-                                            }
-                                            ?.mapTo(output) {
-                                                val year =
-                                                    when (it) {
-                                                        is MovieSearchResponse ->
-                                                            it.year
+                                            home
+                                                ?.items
+                                                ?.flatMap {
+                                                    it.list
+                                                }
+                                                ?.mapTo(
+                                                    output
+                                                ) {
+                                                    val year =
+                                                        when (it) {
+                                                            is MovieSearchResponse ->
+                                                                it.year
 
-                                                        is TvSeriesSearchResponse ->
-                                                            it.year
+                                                            is TvSeriesSearchResponse ->
+                                                                it.year
 
-                                                        is AnimeSearchResponse ->
-                                                            it.year
+                                                            is AnimeSearchResponse ->
+                                                                it.year
 
-                                                        else ->
-                                                            null
-                                                    }
+                                                            else ->
+                                                                null
+                                                        }
 
-                                                SearchItem(
-                                                    name = it.name,
-                                                    url = it.url,
-                                                    provider = api.name,
-                                                    type = it.type?.name,
-                                                    posterUrl = it.posterUrl,
-                                                    year = year
-                                                )
-                                            }
+                                                    SearchItem(
+                                                        name = it.name,
+                                                        url = it.url,
+                                                        provider = api.name,
+                                                        providerId = providerId(api),
+                                                        type = it.type?.name,
+                                                        posterUrl = it.posterUrl,
+                                                        year = year
+                                                    )
+                                                }
+                                        }
+
+                                        output
+                                    } catch (
+                                        error: Throwable
+                                    ) {
+                                        println(
+                                            "Home failed: ${api.name}: ${error.message}"
+                                        )
+
+                                        emptyList()
                                     }
-
-                                    output
-
-                                } catch (
-                                    error: Throwable
-                                ) {
-                                    println(
-                                        "Home failed: ${api.name}: ${error.message}"
-                                    )
-
-                                    emptyList()
                                 }
                             }
-                        }.awaitAll()
+                            .awaitAll()
                             .flatten()
-                            .distinctBy {
-                                "${it.provider}|${it.url}"
-                            }
                     }
 
                 response(
@@ -1263,9 +1419,7 @@ private fun route(
                 )
             }
         }
-
     } catch (error: Throwable) {
-
         error.printStackTrace()
 
         response(
@@ -1282,20 +1436,21 @@ private fun route(
 }
 
 fun main() {
-
     println(
         "Starting Mediav2 CloudStream JVM Runtime"
     )
-
-    pluginDirectory.mkdirs()
 
     println(
         "Repositories: ${repositories.size}"
     )
 
     println(
-        "Requested extensions: ${requestedExtensions.joinToString()}"
+        "Requested extensions: ${
+            requestedExtensions.joinToString()
+        }"
     )
+
+    pluginDirectory.mkdirs()
 
     runCatching {
         syncPlugins()
@@ -1311,6 +1466,14 @@ fun main() {
         "CloudStream providers loaded: ${providers().size}"
     )
 
+    println(
+        "Loaded provider names: ${
+            providers().joinToString {
+                it.name
+            }
+        }"
+    )
+
     val server =
         HttpServer.create(
             InetSocketAddress(
@@ -1320,12 +1483,13 @@ fun main() {
             0
         )
 
-    server.createContext("/") { exchange ->
+    server.createContext("/") {
+        exchange ->
         route(exchange)
     }
 
     server.executor =
-        Executors.newFixedThreadPool(16)
+        Executors.newFixedThreadPool(32)
 
     server.start()
 
@@ -1335,10 +1499,8 @@ fun main() {
 
     scope.launch {
         while (isActive) {
-
             delay(
-                TimeUnit.HOURS
-                    .toMillis(6)
+                6 * 60 * 60 * 1000L
             )
 
             try {
@@ -1346,7 +1508,7 @@ fun main() {
                 loadInstalledPlugins()
             } catch (error: Throwable) {
                 println(
-                    "Periodic sync failed: ${error.message}"
+                    "Periodic plugin sync failed: ${error.message}"
                 )
             }
         }
