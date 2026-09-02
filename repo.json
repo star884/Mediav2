@@ -1,0 +1,8 @@
+{
+  "name": "Mediav2 Extensions",
+  "description": "CloudStream extensions for Mediav2",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/star884/Mediav2/builds/plugins.json"
+  ]
+}
