@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Video Player</title>
+    <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
+        h1 { color: #58a6ff; }
+        .controls { margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; }
+        select, input, button { padding: 10px; background: #161b22; border: 1px solid #30363d; color: #fff; border-radius: 6px; }
+        button { background: #238636; border: none; cursor: pointer; font-weight: bold; }
+        button:hover { background: #2ea043; }
+        .player-container { margin-top: 20px; display: flex; justify-content: center; }
+        .video-js { width: 100%; max-width: 960px; height: 540px; border-radius: 8px; overflow: hidden; }
+    </style>
+</head>
+<body>
+    <h1>Stream Directory</h1>
+    
+    <div class="controls">
+        <select id="providerSelect">
+            <option value="StreamPlay">StreamPlay</option>
+            <option value="Moviebox">Moviebox</option>
+            <option value="4KHDHUB">4KHDHUB</option>
+            <option value="AniDb">AniDb</option>
+            <option value="Animepahe">Animepahe</option>
+            <option value="Cinestream">Cinestream</option>
+        </select>
+        <input type="text" id="targetUrl" placeholder="Enter video/page URL..." style="width: 350px;">
+        <button onclick="loadStream()">Load Video</button>
+    </div>
+
+    <div class="player-container">
+        <video id="webPlayer" class="video-js vjs-default-skin" controls preload="auto"></video>
+    </div>
+
+    <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
+    <script>
+        let player = videojs('webPlayer');
+
+        async function loadStream() {
+            const provider = document.getElementById('providerSelect').value;
+            const targetUrl = document.getElementById('targetUrl').value || 'default';
+
+            try {
+                const res = await fetch(`/api/resolve?provider=${encodeURIComponent(provider)}&targetUrl=${encodeURIComponent(targetUrl)}`);
+                const data = await res.json();
+
+                if (data.streamUrl) {
+                    player.src({
+                        src: data.streamUrl,
+                        type: data.format === 'm3u8' ? 'application/x-mpegURL' : 'video/mp4'
+                    });
+                    player.play();
+                } else {
+                    alert('Could not resolve playable stream link.');
+                }
+            } catch (err) {
+                alert('Error connecting to extraction endpoint.');
+            }
+        }
+    </script>
+</body>
+  </html>
