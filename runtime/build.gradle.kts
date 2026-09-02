@@ -9,7 +9,10 @@ dependencies {
     implementation(project(":library"))
 
     implementation(kotlin("reflect"))
-    implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.13.1")
+
+    implementation(
+        "com.fasterxml.jackson.module:jackson-module-kotlin:2.13.1"
+    )
 }
 
 application {
@@ -32,10 +35,11 @@ tasks.jar {
     from(
         configurations.runtimeClasspath.get()
             .map { file ->
-                if (file.isDirectory)
+                if (file.isDirectory) {
                     file
-                else
+                } else {
                     zipTree(file)
+                }
             }
     )
 }
