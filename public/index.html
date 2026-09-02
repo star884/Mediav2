@@ -2,100 +2,1824 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CloudStream Web Library</title>
-    <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1"
+    >
+
+    <meta
+        name="theme-color"
+        content="#080b10"
+    >
+
+    <title>Mediav2</title>
+
     <style>
-        body { font-family: 'Segoe UI', Arial, sans-serif; background: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
-        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; }
-        .controls { display: flex; gap: 10px; margin: 20px 0; }
-        input, select, button { padding: 10px; background: #161b22; border: 1px solid #30363d; color: white; border-radius: 6px; }
-        button { background: #238636; border: none; cursor: pointer; font-weight: bold; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; }
-        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px; text-align: center; }
-        .card img { width: 100%; height: 260px; object-fit: cover; border-radius: 4px; }
-        .badge { display: inline-block; background: #1f6feb; padding: 3px 8px; font-size: 0.75rem; border-radius: 12px; margin-top: 5px; }
-        .player-modal { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.9); justify-content: center; align-items: center; }
-        .player-content { width: 90%; max-width: 900px; }
-        .close-btn { background: #da3633; float: right; margin-bottom: 10px; }
-    </style>
-</head>
-<body>
-
-    <div class="header">
-        <h1>Auto-Aggregated Library</h1>
-        <span id="itemCount">Loading catalog...</span>
-    </div>
-
-    <div class="controls">
-        <input type="text" id="searchInput" placeholder="Search catalog..." onkeyup="fetchLibrary()">
-        <select id="categorySelect" onchange="fetchLibrary()">
-            <option value="all">All Categories</option>
-            <option value="movie">Movies</option>
-            <option value="anime">Anime</option>
-        </select>
-        <button onclick="fetchLibrary()">Refresh Library</button>
-    </div>
-
-    <div class="grid" id="libraryGrid"></div>
-
-    <!-- Video Modal Player -->
-    <div class="player-modal" id="playerModal">
-        <div class="player-content">
-            <button class="close-btn" onclick="closePlayer()">Close</button>
-            <video id="activePlayer" class="video-js vjs-default-skin" controls preload="auto" style="width: 100%; height: 500px;"></video>
-        </div>
-    </div>
-
-    <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
-    <script>
-        let player = videojs('activePlayer');
-
-        async function fetchLibrary() {
-            const search = document.getElementById('searchInput').value;
-            const category = document.getElementById('categorySelect').value;
-            
-            const res = await fetch(`/api/library?search=${encodeURIComponent(search)}&category=${category}`);
-            const data = await res.json();
-
-            document.getElementById('itemCount').innerText = `${data.count} titles loaded`;
-            const grid = document.getElementById('libraryGrid');
-            grid.innerHTML = '';
-
-            data.library.forEach(item => {
-                grid.innerHTML += `
-                    <div class="card">
-                        <img src="${item.poster}" alt="Poster">
-                        <h4>${item.title}</h4>
-                        <span class="badge">${item.provider}</span>
-                        <br><br>
-                        <button onclick="playStream('${item.provider}', '${item.sourceUrl}')">Watch Now</button>
-                    </div>
-                `;
-            });
+        :root {
+            --bg: #080b10;
+            --panel: #10151d;
+            --panel2: #151b24;
+            --border: #252d38;
+            --text: #f3f6fa;
+            --muted: #8d98a8;
+            --accent: #65a8ff;
+            --danger: #ff6574;
+            --radius: 14px;
         }
 
-        async function playStream(provider, url) {
-            const res = await fetch(`/api/stream?provider=${encodeURIComponent(provider)}&targetUrl=${encodeURIComponent(url)}`);
-            const data = await res.json();
+        * {
+            box-sizing: border-box;
+        }
 
-            if (data.streamUrl) {
-                document.getElementById('playerModal').style.display = 'flex';
-                player.src({
-                    src: data.streamUrl,
-                    type: data.format === 'm3u8' ? 'application/x-mpegURL' : 'video/mp4'
-                });
-                player.play();
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            min-height: 100%;
+            background: var(--bg);
+            color: var(--text);
+            font-family:
+                Inter,
+                system-ui,
+                -apple-system,
+                BlinkMacSystemFont,
+                "Segoe UI",
+                sans-serif;
+        }
+
+        body {
+            overflow-x: hidden;
+        }
+
+        button,
+        input,
+        select {
+            font: inherit;
+        }
+
+        button {
+            cursor: pointer;
+        }
+
+        header {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+
+            display: flex;
+            align-items: center;
+            gap: 14px;
+
+            padding: 14px 18px;
+
+            background:
+                rgba(8, 11, 16, 0.94);
+
+            backdrop-filter:
+                blur(18px);
+
+            border-bottom:
+                1px solid var(--border);
+        }
+
+        .logo {
+            font-size: 20px;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+
+        .search {
+            flex: 1;
+            max-width: 720px;
+            margin: auto;
+        }
+
+        .search input {
+            width: 100%;
+
+            padding: 12px 16px;
+
+            border:
+                1px solid var(--border);
+
+            border-radius: 999px;
+
+            background:
+                var(--panel);
+
+            color:
+                var(--text);
+
+            outline: none;
+        }
+
+        .search input:focus {
+            border-color:
+                var(--accent);
+        }
+
+        .controls {
+            display: flex;
+            gap: 8px;
+        }
+
+        select,
+        .btn {
+            border:
+                1px solid var(--border);
+
+            border-radius: 10px;
+
+            padding: 10px 12px;
+
+            background:
+                var(--panel);
+
+            color:
+                var(--text);
+        }
+
+        .btn:hover {
+            border-color:
+                var(--accent);
+        }
+
+        main {
+            max-width: 1500px;
+            margin: auto;
+            padding: 22px;
+        }
+
+        .status {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+
+            gap: 10px;
+
+            margin-bottom: 18px;
+
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .grid {
+            display: grid;
+
+            grid-template-columns:
+                repeat(
+                    auto-fill,
+                    minmax(150px, 1fr)
+                );
+
+            gap: 18px;
+        }
+
+        .card {
+            overflow: hidden;
+
+            border:
+                1px solid var(--border);
+
+            border-radius:
+                var(--radius);
+
+            background:
+                var(--panel);
+
+            transition:
+                transform 0.15s ease,
+                border-color 0.15s ease;
+        }
+
+        .card:hover {
+            transform:
+                translateY(-3px);
+
+            border-color:
+                #3c4b5f;
+        }
+
+        .poster-wrap {
+            position: relative;
+
+            aspect-ratio: 2 / 3;
+
+            background:
+                var(--panel2);
+
+            overflow: hidden;
+        }
+
+        .poster {
+            width: 100%;
+            height: 100%;
+
+            display: block;
+
+            object-fit: cover;
+        }
+
+        .poster-placeholder {
+            width: 100%;
+            height: 100%;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            padding: 15px;
+
+            color: var(--muted);
+            text-align: center;
+        }
+
+        .card-body {
+            padding: 12px;
+        }
+
+        .title {
+            font-weight: 700;
+
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .meta {
+            margin-top: 5px;
+
+            color: var(--muted);
+
+            font-size: 13px;
+        }
+
+        .card-actions {
+            display: flex;
+            gap: 7px;
+
+            margin-top: 10px;
+        }
+
+        .card-actions button {
+            flex: 1;
+        }
+
+        .empty {
+            padding: 60px 20px;
+
+            text-align: center;
+
+            color: var(--muted);
+        }
+
+        .spinner {
+            width: 26px;
+            height: 26px;
+
+            margin: 30px auto;
+
+            border:
+                3px solid var(--border);
+
+            border-top-color:
+                var(--accent);
+
+            border-radius: 50%;
+
+            animation:
+                spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
             }
         }
 
-        function closePlayer() {
-            player.pause();
-            document.getElementById('playerModal').style.display = 'none';
+        .modal {
+            position: fixed;
+            inset: 0;
+
+            z-index: 100;
+
+            display: none;
+            align-items: center;
+            justify-content: center;
+
+            padding: 18px;
+
+            background:
+                rgba(0, 0, 0, 0.82);
         }
 
-        // Initialize Library on Load
-        fetchLibrary();
-    </script>
+        .modal.open {
+            display: flex;
+        }
+
+        .modal-content {
+            width: min(
+                1100px,
+                100%
+            );
+
+            max-height:
+                calc(100vh - 36px);
+
+            overflow: auto;
+
+            border:
+                1px solid var(--border);
+
+            border-radius:
+                var(--radius);
+
+            background:
+                var(--panel);
+        }
+
+        .modal-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+
+            gap: 15px;
+
+            padding: 14px 16px;
+
+            border-bottom:
+                1px solid var(--border);
+        }
+
+        .modal-close {
+            width: 38px;
+            height: 38px;
+
+            border: 0;
+            border-radius: 50%;
+
+            background:
+                var(--panel2);
+
+            color:
+                var(--text);
+
+            font-size: 20px;
+        }
+
+        video {
+            width: 100%;
+            max-height: 72vh;
+
+            display: block;
+
+            background: #000;
+        }
+
+        .player-info {
+            padding: 14px 16px;
+        }
+
+        .sources {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+
+            margin-top: 10px;
+        }
+
+        .source-btn {
+            border:
+                1px solid var(--border);
+
+            border-radius: 9px;
+
+            padding: 8px 10px;
+
+            background:
+                var(--panel2);
+
+            color:
+                var(--text);
+        }
+
+        .source-btn.active {
+            border-color:
+                var(--accent);
+        }
+
+        .detail {
+            display: grid;
+
+            grid-template-columns:
+                220px 1fr;
+
+            gap: 20px;
+
+            padding: 20px;
+        }
+
+        .detail-poster {
+            width: 100%;
+
+            border-radius:
+                10px;
+        }
+
+        .detail-description {
+            color:
+                var(--muted);
+
+            line-height: 1.6;
+        }
+
+        .favorite {
+            border:
+                1px solid var(--border);
+
+            background:
+                var(--panel2);
+
+            color:
+                var(--text);
+
+            border-radius:
+                10px;
+
+            padding: 9px 12px;
+        }
+
+        @media (max-width: 750px) {
+            header {
+                flex-wrap: wrap;
+            }
+
+            .logo {
+                width: 100%;
+            }
+
+            .search {
+                order: 3;
+                width: 100%;
+            }
+
+            .controls {
+                width: 100%;
+            }
+
+            .controls select,
+            .controls button {
+                flex: 1;
+            }
+
+            main {
+                padding: 14px;
+            }
+
+            .grid {
+                grid-template-columns:
+                    repeat(
+                        2,
+                        minmax(0, 1fr)
+                    );
+
+                gap: 12px;
+            }
+
+            .detail {
+                grid-template-columns:
+                    110px 1fr;
+
+                gap: 14px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<header>
+    <div class="logo">
+        Mediav2
+    </div>
+
+    <div class="search">
+        <input
+            id="searchInput"
+            type="search"
+            autocomplete="off"
+            placeholder="Search everything..."
+            aria-label="Search"
+        >
+    </div>
+
+    <div class="controls">
+        <select id="typeSelect">
+            <option value="all">
+                All
+            </option>
+
+            <option value="movie">
+                Movies
+            </option>
+
+            <option value="series">
+                Series
+            </option>
+
+            <option value="anime">
+                Anime
+            </option>
+
+            <option value="other">
+                Other
+            </option>
+        </select>
+
+        <select id="providerSelect">
+            <option value="all">
+                All providers
+            </option>
+        </select>
+
+        <button
+            class="btn"
+            id="refreshButton"
+            type="button"
+        >
+            Refresh
+        </button>
+    </div>
+</header>
+
+<main>
+
+    <div class="status">
+        <span id="statusText">
+            Ready
+        </span>
+
+        <span id="countText">
+            0 results
+        </span>
+    </div>
+
+    <section
+        id="results"
+        class="grid"
+        aria-live="polite"
+    ></section>
+
+    <div
+        id="empty"
+        class="empty"
+        hidden
+    >
+        Nothing found.
+    </div>
+
+    <div
+        id="loading"
+        hidden
+    >
+        <div class="spinner"></div>
+    </div>
+
+</main>
+
+<!-- Player modal -->
+
+<div
+    id="playerModal"
+    class="modal"
+    role="dialog"
+    aria-modal="true"
+>
+    <div class="modal-content">
+
+        <div class="modal-head">
+            <strong id="playerTitle">
+                Player
+            </strong>
+
+            <button
+                id="closePlayer"
+                class="modal-close"
+                type="button"
+                aria-label="Close player"
+            >
+                ×
+            </button>
+        </div>
+
+        <video
+            id="video"
+            controls
+            playsinline
+            preload="auto"
+        ></video>
+
+        <div class="player-info">
+
+            <div id="playerStatus">
+                Loading...
+            </div>
+
+            <div
+                id="sourceList"
+                class="sources"
+            ></div>
+
+        </div>
+    </div>
+</div>
+
+<!-- Details modal -->
+
+<div
+    id="detailModal"
+    class="modal"
+    role="dialog"
+    aria-modal="true"
+>
+    <div class="modal-content">
+
+        <div class="modal-head">
+
+            <strong id="detailTitle">
+                Details
+            </strong>
+
+            <button
+                id="closeDetail"
+                class="modal-close"
+                type="button"
+                aria-label="Close details"
+            >
+                ×
+            </button>
+
+        </div>
+
+        <div
+            id="detailContent"
+            class="detail"
+        ></div>
+
+    </div>
+</div>
+
+<script>
+'use strict';
+
+const state = {
+    results: [],
+    currentTitle: null,
+    currentSources: [],
+    currentSourceIndex: 0,
+    searchTimer: null,
+    searchController: null
+};
+
+const elements = {
+    searchInput:
+        document.getElementById(
+            'searchInput'
+        ),
+
+    typeSelect:
+        document.getElementById(
+            'typeSelect'
+        ),
+
+    providerSelect:
+        document.getElementById(
+            'providerSelect'
+        ),
+
+    refreshButton:
+        document.getElementById(
+            'refreshButton'
+        ),
+
+    results:
+        document.getElementById(
+            'results'
+        ),
+
+    empty:
+        document.getElementById(
+            'empty'
+        ),
+
+    loading:
+        document.getElementById(
+            'loading'
+        ),
+
+    statusText:
+        document.getElementById(
+            'statusText'
+        ),
+
+    countText:
+        document.getElementById(
+            'countText'
+        ),
+
+    playerModal:
+        document.getElementById(
+            'playerModal'
+        ),
+
+    video:
+        document.getElementById(
+            'video'
+        ),
+
+    playerTitle:
+        document.getElementById(
+            'playerTitle'
+        ),
+
+    playerStatus:
+        document.getElementById(
+            'playerStatus'
+        ),
+
+    sourceList:
+        document.getElementById(
+            'sourceList'
+        ),
+
+    detailModal:
+        document.getElementById(
+            'detailModal'
+        ),
+
+    detailTitle:
+        document.getElementById(
+            'detailTitle'
+        ),
+
+    detailContent:
+        document.getElementById(
+            'detailContent'
+        )
+};
+
+function escapeForAttribute(value) {
+    return String(value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function getFavoriteKey(item) {
+    return `mediav2-favorite:${item.id}`;
+}
+
+function getProgressKey(item) {
+    return `mediav2-progress:${item.id}`;
+}
+
+function isFavorite(item) {
+    return (
+        localStorage.getItem(
+            getFavoriteKey(item)
+        ) === '1'
+    );
+}
+
+function setFavorite(item, value) {
+    if (value) {
+        localStorage.setItem(
+            getFavoriteKey(item),
+            '1'
+        );
+    } else {
+        localStorage.removeItem(
+            getFavoriteKey(item)
+        );
+    }
+}
+
+function getProgress(item) {
+    const value =
+        Number(
+            localStorage.getItem(
+                getProgressKey(item)
+            )
+        );
+
+    return Number.isFinite(value)
+        ? value
+        : 0;
+}
+
+function setProgress(item, seconds) {
+    if (
+        !Number.isFinite(seconds) ||
+        seconds <= 0
+    ) {
+        return;
+    }
+
+    localStorage.setItem(
+        getProgressKey(item),
+        String(seconds)
+    );
+}
+
+function setLoading(value) {
+    elements.loading.hidden =
+        !value;
+}
+
+function setStatus(text) {
+    elements.statusText.textContent =
+        text;
+}
+
+function setCount(count) {
+    elements.countText.textContent =
+        `${count} result${count === 1 ? '' : 's'}`;
+}
+
+async function loadProviders() {
+    try {
+        const response =
+            await fetch(
+                '/api/providers'
+            );
+
+        const data =
+            await response.json();
+
+        elements.providerSelect
+            .querySelectorAll(
+                'option:not([value="all"])'
+            )
+            .forEach(option =>
+                option.remove()
+            );
+
+        for (
+            const provider
+            of data.providers || []
+        ) {
+            const option =
+                document.createElement(
+                    'option'
+                );
+
+            option.value =
+                provider.id;
+
+            option.textContent =
+                provider.name;
+
+            elements.providerSelect
+                .appendChild(option);
+        }
+    } catch (error) {
+        console.error(error);
+    }
+}
+
+function createCard(item, index) {
+    const article =
+        document.createElement(
+            'article'
+        );
+
+    article.className =
+        'card';
+
+    const posterWrap =
+        document.createElement(
+            'div'
+        );
+
+    posterWrap.className =
+        'poster-wrap';
+
+    if (item.poster) {
+        const img =
+            document.createElement(
+                'img'
+            );
+
+        img.className =
+            'poster';
+
+        img.loading =
+            'lazy';
+
+        img.alt =
+            item.title;
+
+        img.src =
+            item.poster;
+
+        img.addEventListener(
+            'error',
+            () => {
+                img.remove();
+
+                const fallback =
+                    document.createElement(
+                        'div'
+                    );
+
+                fallback.className =
+                    'poster-placeholder';
+
+                fallback.textContent =
+                    item.title;
+
+                posterWrap.appendChild(
+                    fallback
+                );
+            }
+        );
+
+        posterWrap.appendChild(
+            img
+        );
+    } else {
+        const fallback =
+            document.createElement(
+                'div'
+            );
+
+        fallback.className =
+            'poster-placeholder';
+
+        fallback.textContent =
+            item.title;
+
+        posterWrap.appendChild(
+            fallback
+        );
+    }
+
+    const body =
+        document.createElement(
+            'div'
+        );
+
+    body.className =
+        'card-body';
+
+    const title =
+        document.createElement(
+            'div'
+        );
+
+    title.className =
+        'title';
+
+    title.textContent =
+        item.title;
+
+    const meta =
+        document.createElement(
+            'div'
+        );
+
+    meta.className =
+        'meta';
+
+    meta.textContent =
+        [
+            item.provider,
+            item.year,
+            item.type
+        ]
+            .filter(Boolean)
+            .join(' • ');
+
+    const actions =
+        document.createElement(
+            'div'
+        );
+
+    actions.className =
+        'card-actions';
+
+    const watch =
+        document.createElement(
+            'button'
+        );
+
+    watch.className =
+        'btn';
+
+    watch.type =
+        'button';
+
+    watch.textContent =
+        'Watch';
+
+    watch.addEventListener(
+        'click',
+        () =>
+            openPlayer(item)
+    );
+
+    const details =
+        document.createElement(
+            'button'
+        );
+
+    details.className =
+        'btn';
+
+    details.type =
+        'button';
+
+    details.textContent =
+        'Details';
+
+    details.addEventListener(
+        'click',
+        () =>
+            openDetails(item)
+    );
+
+    actions.append(
+        watch,
+        details
+    );
+
+    body.append(
+        title,
+        meta,
+        actions
+    );
+
+    article.append(
+        posterWrap,
+        body
+    );
+
+    return article;
+}
+
+function renderResults(items) {
+    elements.results.replaceChildren();
+
+    if (!items.length) {
+        elements.empty.hidden =
+            false;
+
+        setCount(0);
+
+        return;
+    }
+
+    elements.empty.hidden =
+        true;
+
+    const fragment =
+        document.createDocumentFragment();
+
+    items.forEach(
+        (item, index) => {
+            fragment.appendChild(
+                createCard(
+                    item,
+                    index
+                )
+            );
+        }
+    );
+
+    elements.results.appendChild(
+        fragment
+    );
+
+    setCount(items.length);
+}
+
+async function search() {
+    const query =
+        elements.searchInput.value.trim();
+
+    const type =
+        elements.typeSelect.value;
+
+    const provider =
+        elements.providerSelect.value;
+
+    if (state.searchController) {
+        state.searchController.abort();
+    }
+
+    state.searchController =
+        new AbortController();
+
+    if (query.length < 2) {
+        await loadLibrary();
+        return;
+    }
+
+    setLoading(true);
+
+    setStatus(
+        `Searching ${provider === 'all' ? 'all providers' : provider}...`
+    );
+
+    try {
+        const params =
+            new URLSearchParams();
+
+        params.set(
+            'q',
+            query
+        );
+
+        if (
+            type !== 'all'
+        ) {
+            params.set(
+                'type',
+                type
+            );
+        }
+
+        const response =
+            await fetch(
+                `/api/search?${params}`,
+                {
+                    signal:
+                        state.searchController
+                            .signal
+                }
+            );
+
+        if (!response.ok) {
+            throw new Error(
+                await response.text()
+            );
+        }
+
+        const data =
+            await response.json();
+
+        let items =
+            data.items || [];
+
+        if (
+            provider !== 'all'
+        ) {
+            items =
+                items.filter(
+                    item =>
+                        item.providers?.some(
+                            p =>
+                                p.id ===
+                                provider
+                        )
+                );
+        }
+
+        state.results =
+            items;
+
+        renderResults(items);
+
+        setStatus(
+            `Search completed in ${data.elapsed}ms`
+        );
+    } catch (error) {
+        if (
+            error.name !==
+            'AbortError'
+        ) {
+            console.error(error);
+
+            setStatus(
+                'Search failed'
+            );
+
+            elements.empty.hidden =
+                false;
+
+            elements.empty.textContent =
+                'Search failed. Check the server logs.';
+        }
+    } finally {
+        setLoading(false);
+    }
+}
+
+async function loadLibrary() {
+    setLoading(true);
+
+    setStatus(
+        'Loading library...'
+    );
+
+    try {
+        const params =
+            new URLSearchParams();
+
+        params.set(
+            'limit',
+            '100'
+        );
+
+        const type =
+            elements.typeSelect.value;
+
+        const provider =
+            elements.providerSelect.value;
+
+        if (
+            type !== 'all'
+        ) {
+            params.set(
+                'type',
+                type
+            );
+        }
+
+        if (
+            provider !== 'all'
+        ) {
+            params.set(
+                'provider',
+                provider
+            );
+        }
+
+        const response =
+            await fetch(
+                `/api/library?${params}`
+            );
+
+        const data =
+            await response.json();
+
+        state.results =
+            data.items || [];
+
+        renderResults(
+            state.results
+        );
+
+        setStatus(
+            'Library loaded'
+        );
+    } catch (error) {
+        console.error(error);
+
+        setStatus(
+            'Failed to load library'
+        );
+    } finally {
+        setLoading(false);
+    }
+}
+
+async function openDetails(item) {
+    elements.detailModal.classList.add(
+        'open'
+    );
+
+    elements.detailTitle.textContent =
+        item.title;
+
+    elements.detailContent.replaceChildren();
+
+    const loading =
+        document.createElement(
+            'div'
+        );
+
+    loading.className =
+        'empty';
+
+    loading.textContent =
+        'Loading details...';
+
+    elements.detailContent.appendChild(
+        loading
+    );
+
+    try {
+        const response =
+            await fetch(
+                `/api/title/${encodeURIComponent(item.id)}`
+            );
+
+        if (!response.ok) {
+            throw new Error(
+                'Unable to load details'
+            );
+        }
+
+        const data =
+            await response.json();
+
+        const full =
+            data.item;
+
+        renderDetails(full);
+    } catch (error) {
+        console.error(error);
+
+        elements.detailContent.replaceChildren();
+
+        const errorNode =
+            document.createElement(
+                'div'
+            );
+
+        errorNode.className =
+            'empty';
+
+        errorNode.textContent =
+            'Unable to load title details.';
+
+        elements.detailContent.appendChild(
+            errorNode
+        );
+    }
+}
+
+function renderDetails(item) {
+    elements.detailContent.replaceChildren();
+
+    const poster =
+        document.createElement(
+            'div'
+        );
+
+    if (item.poster) {
+        const img =
+            document.createElement(
+                'img'
+            );
+
+        img.className =
+            'detail-poster';
+
+        img.src =
+            item.poster;
+
+        img.alt =
+            item.title;
+
+        poster.appendChild(
+            img
+        );
+    }
+
+    const info =
+        document.createElement(
+            'div'
+        );
+
+    const title =
+        document.createElement(
+            'h2'
+        );
+
+    title.textContent =
+        item.title;
+
+    const meta =
+        document.createElement(
+            'div'
+        );
+
+    meta.className =
+        'meta';
+
+    meta.textContent =
+        [
+            item.provider,
+            item.year,
+            item.type
+        ]
+            .filter(Boolean)
+            .join(' • ');
+
+    const description =
+        document.createElement(
+            'p'
+        );
+
+    description.className =
+        'detail-description';
+
+    description.textContent =
+        item.description ||
+        'No description available.';
+
+    const favorite =
+        document.createElement(
+            'button'
+        );
+
+    favorite.className =
+        'favorite';
+
+    favorite.type =
+        'button';
+
+    function updateFavoriteText() {
+        favorite.textContent =
+            isFavorite(item)
+                ? '★ Remove favorite'
+                : '☆ Add favorite';
+    }
+
+    updateFavoriteText();
+
+    favorite.addEventListener(
+        'click',
+        () => {
+            setFavorite(
+                item,
+                !isFavorite(item)
+            );
+
+            updateFavoriteText();
+        }
+    );
+
+    const watch =
+        document.createElement(
+            'button'
+        );
+
+    watch.className =
+        'btn';
+
+    watch.type =
+        'button';
+
+    watch.textContent =
+        'Watch';
+
+    watch.style.marginLeft =
+        '8px';
+
+    watch.addEventListener(
+        'click',
+        () => {
+            closeDetails();
+            openPlayer(item);
+        }
+    );
+
+    info.append(
+        title,
+        meta,
+        description,
+        favorite,
+        watch
+    );
+
+    elements.detailContent.append(
+        poster,
+        info
+    );
+}
+
+async function openPlayer(item) {
+    state.currentTitle =
+        item;
+
+    elements.playerModal.classList.add(
+        'open'
+    );
+
+    elements.playerTitle.textContent =
+        item.title;
+
+    elements.playerStatus.textContent =
+        'Finding sources...';
+
+    elements.sourceList.replaceChildren();
+
+    elements.video.pause();
+
+    elements.video.removeAttribute(
+        'src'
+    );
+
+    elements.video.load();
+
+    try {
+        const response =
+            await fetch(
+                `/api/sources/${encodeURIComponent(item.id)}`
+            );
+
+        if (!response.ok) {
+            throw new Error(
+                await response.text()
+            );
+        }
+
+        const data =
+            await response.json();
+
+        state.currentSources =
+            data.sources || [];
+
+        renderSources(
+            state.currentSources
+        );
+
+        if (
+            state.currentSources.length
+        ) {
+            selectSource(0);
+        } else {
+            elements.playerStatus.textContent =
+                'No playable source was found.';
+        }
+    } catch (error) {
+        console.error(error);
+
+        elements.playerStatus.textContent =
+            'Unable to find a playable source.';
+    }
+}
+
+function renderSources(sources) {
+    elements.sourceList.replaceChildren();
+
+    sources.forEach(
+        (source, index) => {
+            const button =
+                document.createElement(
+                    'button'
+                );
+
+            button.className =
+                'source-btn';
+
+            button.type =
+                'button';
+
+            button.textContent =
+                [
+                    source.name ||
+                        `Source ${index + 1}`,
+                    source.quality,
+                    source.format
+                ]
+                    .filter(Boolean)
+                    .join(' • ');
+
+            button.addEventListener(
+                'click',
+                () =>
+                    selectSource(index)
+            );
+
+            elements.sourceList.appendChild(
+                button
+            );
+        }
+    );
+}
+
+async function selectSource(index) {
+    const source =
+        state.currentSources[index];
+
+    if (!source) {
+        return;
+    }
+
+    state.currentSourceIndex =
+        index;
+
+    document
+        .querySelectorAll(
+            '.source-btn'
+        )
+        .forEach(
+            (button, buttonIndex) => {
+                button.classList.toggle(
+                    'active',
+                    buttonIndex === index
+                );
+            }
+        );
+
+    const url =
+        source.url;
+
+    if (!url) {
+        return;
+    }
+
+    elements.playerStatus.textContent =
+        `Loading ${source.quality || source.format || 'source'}...`;
+
+    elements.video.pause();
+
+    elements.video.removeAttribute(
+        'src'
+    );
+
+    elements.video.load();
+
+    elements.video.src =
+        url;
+
+    const saved =
+        getProgress(
+            state.currentTitle
+        );
+
+    elements.video.addEventListener(
+        'loadedmetadata',
+        () => {
+            if (
+                saved > 0 &&
+                saved <
+                    elements.video.duration - 5
+            ) {
+                try {
+                    elements.video.currentTime =
+                        saved;
+                } catch {
+                    // Ignore invalid resume positions.
+                }
+            }
+        },
+        {
+            once: true
+        }
+    );
+
+    elements.video.load();
+
+    try {
+        await elements.video.play();
+
+        elements.playerStatus.textContent =
+            'Playing';
+    } catch (error) {
+        console.info(
+            'Autoplay was blocked:',
+            error.message
+        );
+
+        elements.playerStatus.textContent =
+            'Ready — tap the play button to start.';
+    }
+}
+
+function closePlayer() {
+    if (
+        state.currentTitle
+    ) {
+        setProgress(
+            state.currentTitle,
+            elements.video.currentTime
+        );
+    }
+
+    elements.video.pause();
+
+    elements.video.removeAttribute(
+        'src'
+    );
+
+    elements.video.load();
+
+    elements.playerModal.classList.remove(
+        'open'
+    );
+
+    state.currentTitle =
+        null;
+
+    state.currentSources =
+        [];
+}
+
+function closeDetails() {
+    elements.detailModal.classList.remove(
+        'open'
+    );
+}
+
+elements.video.addEventListener(
+    'timeupdate',
+    () => {
+        if (
+            state.currentTitle &&
+            elements.video.currentTime > 5
+        ) {
+            setProgress(
+                state.currentTitle,
+                elements.video.currentTime
+            );
+        }
+    }
+);
+
+document
+    .getElementById('closePlayer')
+    .addEventListener(
+        'click',
+        closePlayer
+    );
+
+document
+    .getElementById('closeDetail')
+    .addEventListener(
+        'click',
+        closeDetails
+    );
+
+elements.playerModal.addEventListener(
+    'click',
+    event => {
+        if (
+            event.target ===
+            elements.playerModal
+        ) {
+            closePlayer();
+        }
+    }
+);
+
+elements.detailModal.addEventListener(
+    'click',
+    event => {
+        if (
+            event.target ===
+            elements.detailModal
+        ) {
+            closeDetails();
+        }
+    }
+);
+
+elements.searchInput.addEventListener(
+    'input',
+    () => {
+        clearTimeout(
+            state.searchTimer
+        );
+
+        state.searchTimer =
+            setTimeout(
+                search,
+                350
+            );
+    }
+);
+
+elements.typeSelect.addEventListener(
+    'change',
+    search
+);
+
+elements.providerSelect.addEventListener(
+    'change',
+    search
+);
+
+elements.refreshButton.addEventListener(
+    'click',
+    () => {
+        search();
+    }
+);
+
+document.addEventListener(
+    'keydown',
+    event => {
+        if (
+            event.key === 'Escape'
+        ) {
+            closePlayer();
+            closeDetails();
+        }
+    }
+);
+
+(async function init() {
+    await loadProviders();
+    await loadLibrary();
+})();
+</script>
+
 </body>
-</html>
+    </html>
