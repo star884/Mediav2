@@ -38,10 +38,27 @@ const EXTENSION_SYNC_HOURS =
     process.env.EXTENSION_SYNC_HOURS || 6
   );
 
+/*
+ * Mediav2 and the JVM CloudStream runtime run
+ * inside the same container.
+ *
+ * The runtime listens on 10001 by default.
+ */
 const BRIDGE_URL =
   (
-    process.env.CLOUDSTREAM_BRIDGE_URL || ""
+    process.env.CLOUDSTREAM_BRIDGE_URL ||
+    "http://127.0.0.1:10001"
   ).replace(/\/+$/, "");
+
+/*
+ * CloudStream operations can legitimately take
+ * considerably longer than normal HTTP requests.
+ */
+const BRIDGE_TIMEOUT_MS =
+  Number(
+    process.env.CLOUDSTREAM_BRIDGE_TIMEOUT_MS ||
+    130000
+  );
 
 const USER_AGENT =
   process.env.USER_AGENT ||
@@ -210,6 +227,10 @@ function mimeForFormat(
     case "hls":
       return "application/vnd.apple.mpegurl";
 
+    case "mpd":
+    case "dash":
+      return "application/dash+xml";
+
     default:
       return null;
   }
@@ -281,6 +302,20 @@ async function fetchJson(
     }
 
     return await response.json();
+  } catch (error) {
+    if (
+      error?.name ===
+      "AbortError"
+    ) {
+      throw new Error(
+        `Request timed out after ${
+          options.timeout ||
+          REQUEST_TIMEOUT_MS
+        }ms`
+      );
+    }
+
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
@@ -293,6 +328,12 @@ async function fetchJson(
 function normalizeMediaItem(
   item
 ) {
+  item =
+    item &&
+    typeof item === "object"
+      ? item
+      : {};
+
   const providerId =
     safeString(
       item.providerId,
@@ -308,7 +349,9 @@ function normalizeMediaItem(
   const sourceId =
     safeString(
       item.sourceId,
-      safeString(item.id)
+      safeString(
+        item.id
+      )
     );
 
   const title =
@@ -331,6 +374,26 @@ function normalizeMediaItem(
       `${providerId}:${sourceId}:${title}`
     );
 
+  const sourceUrl =
+    normalizeUrl(
+      item.sourceUrl ||
+      item.url ||
+      item.link
+    );
+
+  const poster =
+    normalizeUrl(
+      item.poster ||
+      item.posterUrl ||
+      item.image
+    );
+
+  const backdrop =
+    normalizeUrl(
+      item.backdrop ||
+      item.backdropUrl
+    );
+
   return {
     id,
 
@@ -340,10 +403,7 @@ function normalizeMediaItem(
 
     sourceId,
 
-    sourceUrl:
-      normalizeUrl(
-        item.sourceUrl
-      ),
+    sourceUrl,
 
     title,
 
@@ -362,15 +422,9 @@ function normalizeMediaItem(
         ? Number(item.year)
         : null,
 
-    poster:
-      normalizeUrl(
-        item.poster
-      ),
+    poster,
 
-    backdrop:
-      normalizeUrl(
-        item.backdrop
-      ),
+    backdrop,
 
     description:
       safeString(
@@ -413,6 +467,16 @@ function normalizeMediaItem(
     episode:
       item.episode ?? null,
 
+    /*
+     * IMPORTANT:
+     * CloudStream's LoadResponse data is needed
+     * by loadLinks().
+     */
+    data:
+      safeString(
+        item.data
+      ) || null,
+
     episodes:
       Array.isArray(
         item.episodes
@@ -425,6 +489,13 @@ function normalizeMediaItem(
         item.seasons
       )
         ? item.seasons
+        : [],
+
+    sources:
+      Array.isArray(
+        item.sources
+      )
+        ? item.sources
         : [],
 
     metadata:
@@ -933,6 +1004,17 @@ const DEFAULT_CLOUDSTREAM_REPOSITORIES = [
 
     url:
       "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json"
+  },
+
+  {
+    id:
+      "streamplay",
+
+    name:
+      "StreamPlay",
+
+    url:
+      "https://raw.githubusercontent.com/tpadev/phiser-streamplay/builds/repo.json"
   }
 ];
 
@@ -1156,9 +1238,6 @@ function normalizeExtension(
 
     internalName,
 
-    /*
-     * THIS IS THE REAL CLOUDSTREAM PLUGIN URL.
-     */
     pluginUrl,
 
     url:
@@ -1292,8 +1371,7 @@ async function syncOneRepository(
     [];
 
   /*
-   * Support repositories that put plugins
-   * directly into the manifest.
+   * Some repositories expose plugins directly.
    */
   for (
     const plugin of
@@ -1416,10 +1494,6 @@ async function syncExtensions() {
   const discovered =
     [];
 
-  /*
-   * A failed repository does not invalidate
-   * the successful repositories.
-   */
   await Promise.all(
     repositories.map(
       async repository => {
@@ -1470,15 +1544,11 @@ async function syncExtensions() {
     uniqueBy(
       discovered,
       extension =>
-        `${extension.internalName}:${extension.pluginUrl}`
+        `${normalizeExtensionName(
+          extension.internalName
+        )}:${extension.pluginUrl}`
     );
 
-  /*
-   * Requested extensions are selected from
-   * REAL manifest entries.
-   *
-   * Nothing is fabricated.
-   */
   const enabled =
     extensions.filter(
       extension =>
@@ -1517,6 +1587,38 @@ async function syncExtensions() {
     `${enabled.length} requested/enabled.`
   );
 
+  for (
+    const requested
+      of REQUESTED_EXTENSIONS
+  ) {
+    const matches =
+      enabled.filter(
+        extension =>
+          extensionMatches(
+            extension,
+            requested
+          )
+      );
+
+    if (
+      matches.length
+    ) {
+      console.log(
+        `[Extensions] ${requested}: ` +
+        matches
+          .map(
+            extension =>
+              extension.name
+          )
+          .join(", ")
+      );
+    } else {
+      console.warn(
+        `[Extensions] ${requested}: NOT FOUND`
+      );
+    }
+  }
+
   return extensionState;
 }
 
@@ -1546,7 +1648,7 @@ async function bridgeRequest(
       body,
 
       timeout:
-        REQUEST_TIMEOUT_MS,
+        BRIDGE_TIMEOUT_MS,
 
       headers: {
         "Content-Type":
@@ -1591,9 +1693,9 @@ function findExtension(
     ) || null;
 }
 
-/* ------------------------------------------------------------
+/* ============================================================
    CLOUDSTREAM SEARCH
------------------------------------------------------------- */
+============================================================ */
 
 async function bridgeSearch(
   query,
@@ -1612,12 +1714,6 @@ async function bridgeSearch(
             "all"
           ),
 
-        /*
-         * IMPORTANT:
-         *
-         * The bridge receives the REAL metadata
-         * fetched from the CloudStream repositories.
-         */
         extensions:
           getEnabledExtensions()
       }
@@ -1632,17 +1728,16 @@ async function bridgeSearch(
         ? result.results
         : [];
 
-  return results.map(
-    result =>
-      normalizeBridgeResult(
-        result
-      )
-  );
+  return results
+    .map(
+      normalizeBridgeResult
+    )
+    .filter(Boolean);
 }
 
-/* ------------------------------------------------------------
+/* ============================================================
    CLOUDSTREAM HOME
------------------------------------------------------------- */
+============================================================ */
 
 async function bridgeHome(
   options = {}
@@ -1679,14 +1774,16 @@ async function bridgeHome(
         ? result.items
         : [];
 
-  return results.map(
-    normalizeBridgeResult
-  );
+  return results
+    .map(
+      normalizeBridgeResult
+    )
+    .filter(Boolean);
 }
 
-/* ------------------------------------------------------------
+/* ============================================================
    CLOUDSTREAM LOAD
------------------------------------------------------------- */
+============================================================ */
 
 async function bridgeLoad(
   item
@@ -1720,6 +1817,7 @@ async function bridgeLoad(
 
         url:
           item.sourceUrl ||
+          item.url ||
           null
       }
     );
@@ -1730,12 +1828,13 @@ async function bridgeLoad(
   );
 }
 
-/* ------------------------------------------------------------
+/* ============================================================
    CLOUDSTREAM SOURCES
------------------------------------------------------------- */
+============================================================ */
 
 async function bridgeSources(
-  item
+  item,
+  data = null
 ) {
   const extension =
     findExtension(
@@ -1766,6 +1865,16 @@ async function bridgeSources(
 
         url:
           item.sourceUrl ||
+          item.url ||
+          null,
+
+        /*
+         * This is the important CloudStream
+         * LoadResponse data passed to loadLinks().
+         */
+        data:
+          data ||
+          item.data ||
           null
       }
     );
@@ -1791,22 +1900,47 @@ function normalizeBridgeResult(
     return null;
   }
 
-  const providerId =
-    safeString(
-      result.providerId,
-      safeString(
-        result.provider?.id,
-        "cloudstream"
-      )
-    );
-
+  /*
+   * The runtime may return:
+   *
+   * provider: "CineStream"
+   *
+   * or:
+   *
+   * provider: {
+   *   id: "...",
+   *   name: "CineStream"
+   * }
+   *
+   * or explicit providerName/providerId.
+   */
   const providerName =
     safeString(
       result.providerName,
       safeString(
-        result.provider?.name,
+        typeof result.provider === "object"
+          ? result.provider?.name
+          : result.provider,
         "CloudStream"
       )
+    );
+
+  const providerId =
+    safeString(
+      result.providerId,
+      safeString(
+        typeof result.provider === "object"
+          ? result.provider?.id
+          : null,
+        providerName
+      )
+    );
+
+  const sourceUrl =
+    normalizeUrl(
+      result.sourceUrl ||
+      result.url ||
+      result.link
     );
 
   return normalizeMediaItem({
@@ -1816,12 +1950,16 @@ function normalizeBridgeResult(
 
     providerName,
 
+    sourceUrl,
+
     sourceId:
       safeString(
         result.sourceId,
         safeString(
           result.url,
-          result.id
+          safeString(
+            result.id
+          )
         )
       ),
 
@@ -1830,6 +1968,10 @@ function normalizeBridgeResult(
       result
   });
 }
+
+/* ============================================================
+   BRIDGE LOAD NORMALIZATION
+============================================================ */
 
 function normalizeBridgeLoad(
   result,
@@ -1862,11 +2004,37 @@ function normalizeBridgeLoad(
         result.sourceId ||
         originalItem.sourceId,
 
+      sourceUrl:
+        result.sourceUrl ||
+        result.url ||
+        originalItem.sourceUrl,
+
+      data:
+        result.data ||
+        originalItem.data ||
+        null,
+
       raw:
         result.raw ||
         result
     });
 
+  /*
+   * Preserve CloudStream's actual LoadResponse data.
+   */
+  if (
+    safeString(
+      result.data
+    )
+  ) {
+    item.data =
+      result.data;
+  }
+
+  /*
+   * Preserve source lists returned by
+   * the runtime, if present.
+   */
   if (
     Array.isArray(
       result.sources
@@ -1879,13 +2047,50 @@ function normalizeBridgeLoad(
       );
   }
 
+  /*
+   * Preserve episodes exactly enough for
+   * the frontend to request a particular
+   * episode's data.
+   */
   if (
     Array.isArray(
       result.episodes
     )
   ) {
     item.episodes =
-      result.episodes;
+      result.episodes.map(
+        episode => ({
+          ...episode,
+
+          data:
+            safeString(
+              episode?.data
+            ) || null,
+
+          season:
+            episode?.season ??
+            null,
+
+          episode:
+            episode?.episode ??
+            null,
+
+          name:
+            safeString(
+              episode?.name,
+              safeString(
+                episode?.title,
+                "Episode"
+              )
+            ),
+
+          poster:
+            normalizeUrl(
+              episode?.poster ||
+              episode?.posterUrl
+            )
+        })
+      );
   }
 
   if (
@@ -1900,10 +2105,22 @@ function normalizeBridgeLoad(
   return item;
 }
 
+/* ============================================================
+   SOURCE NORMALIZATION
+============================================================ */
+
 function normalizeSources(
   sources,
   parent
 ) {
+  if (
+    !Array.isArray(
+      sources
+    )
+  ) {
+    return [];
+  }
+
   return uniqueBy(
     sources
       .map(
@@ -1912,15 +2129,40 @@ function normalizeSources(
             typeof source ===
               "string"
           ) {
+            const url =
+              normalizeUrl(
+                source
+              );
+
+            if (!url) {
+              return null;
+            }
+
             return {
               id:
-                hash(source),
+                hash(url),
 
               title:
                 source,
 
-              url:
-                normalizeUrl(
+              url,
+
+              format:
+                /\\.m3u8(?:$|\\?)/i.test(
+                  url
+                )
+                  ? "hls"
+                  : "",
+
+              mime:
+                /\\.m3u8(?:$|\\?)/i.test(
+                  url
+                )
+                  ? "application/vnd.apple.mpegurl"
+                  : null,
+
+              quality:
+                extractQuality(
                   source
                 ),
 
@@ -1950,13 +2192,35 @@ function normalizeSources(
             return null;
           }
 
-          const format =
+          let format =
             safeString(
-              source.format,
+              source.format
+            ).toLowerCase();
+
+          if (!format) {
+            format =
               safeString(
                 source.type
+              ).toLowerCase();
+          }
+
+          if (!format) {
+            if (
+              /\\.m3u8(?:$|\\?)/i.test(
+                url
               )
-            ).toLowerCase();
+            ) {
+              format =
+                "hls";
+            } else if (
+              /\\.mpd(?:$|\\?)/i.test(
+                url
+              )
+            ) {
+              format =
+                "dash";
+            }
+          }
 
           return {
             id:
@@ -2001,6 +2265,11 @@ function normalizeSources(
                 ? source.headers
                 : undefined,
 
+            referer:
+              safeString(
+                source.referer
+              ) || undefined,
+
             subtitles:
               Array.isArray(
                 source.subtitles
@@ -2009,7 +2278,12 @@ function normalizeSources(
                 : [],
 
             isM3u8:
-              /\.m3u8(?:$|\?)/i.test(
+              /\\.m3u8(?:$|\\?)/i.test(
+                url
+              ),
+
+            isDash:
+              /\\.mpd(?:$|\\?)/i.test(
                 url
               ),
 
@@ -2102,7 +2376,7 @@ async function searchAllProviders(
     [];
 
   /*
-   * Local/native providers.
+   * Native providers.
    */
   for (
     const provider of
@@ -2118,13 +2392,22 @@ async function searchAllProviders(
   }
 
   /*
-   * Actual CloudStream runtime.
+   * Actual CloudStream JVM runtime.
    */
   if (BRIDGE_URL) {
     tasks.push(
       bridgeSearch(
         query,
         options
+      ).catch(
+        error => {
+          console.error(
+            "[CloudStream Search]",
+            error.message
+          );
+
+          return [];
+        }
       )
     );
   }
@@ -2135,14 +2418,10 @@ async function searchAllProviders(
     );
 
   const merged =
-    results.flat()
+    results
+      .flat()
       .filter(Boolean);
 
-  /*
-   * Keep provider identity in the key.
-   * Two providers can legitimately expose
-   * different versions of the same title.
-   */
   return uniqueBy(
     merged,
     item =>
@@ -2210,6 +2489,15 @@ async function homeAllProviders(
     tasks.push(
       bridgeHome(
         options
+      ).catch(
+        error => {
+          console.error(
+            "[CloudStream Home]",
+            error.message
+          );
+
+          return [];
+        }
       )
     );
   }
@@ -2220,9 +2508,13 @@ async function homeAllProviders(
     );
 
   return uniqueBy(
-    results.flat(),
+    results
+      .flat()
+      .filter(Boolean),
     item =>
-      `${item.providerId}:${item.sourceId || item.id}`
+      `${normalizeExtensionName(
+        item.providerId
+      )}:${item.sourceId || item.id}`
   );
 }
 
@@ -2273,6 +2565,9 @@ app.get(
 
           name:
             extension.name,
+
+          internalName:
+            extension.internalName,
 
           type:
             "cloudstream",
@@ -2339,6 +2634,9 @@ app.get(
           BRIDGE_URL
         ),
 
+      bridgeUrl:
+        BRIDGE_URL,
+
       extensions:
         (
           Array.isArray(
@@ -2355,9 +2653,6 @@ app.get(
                 extension.id
               ),
 
-            /*
-             * Explicitly expose the actual .cs3.
-             */
             pluginUrl:
               extension.pluginUrl ||
               extension.url
@@ -2666,8 +2961,7 @@ app.get(
 
     try {
       /*
-       * CloudStream gets first priority for CloudStream
-       * results.
+       * CloudStream gets first priority.
        */
       if (
         BRIDGE_URL &&
@@ -2682,6 +2976,14 @@ app.get(
           if (
             loaded
           ) {
+            /*
+             * Update the cached item with
+             * CloudStream's LoadResponse data.
+             */
+            mergeIntoLibrary([
+              loaded
+            ]);
+
             return res.json({
               ok:
                 true,
@@ -2786,27 +3088,167 @@ app.get(
 
     try {
       /*
-       * CloudStream result.
+       * ======================================================
+       * CLOUDSTREAM
+       *
+       * CloudStream's loadLinks() requires the
+       * LoadResponse data string.
+       *
+       * Therefore:
+       *
+       * 1. Load the title.
+       * 2. Select the requested episode if applicable.
+       * 3. Extract episode.data.
+       * 4. Pass that data to /sources.
+       * ======================================================
        */
       if (
         BRIDGE_URL &&
         item.providerId
       ) {
         try {
-          const sources =
-            await bridgeSources(
-              item
+          let loaded =
+            null;
+
+          try {
+            loaded =
+              await bridgeLoad(
+                item
+              );
+          } catch (
+            loadError
+          ) {
+            console.error(
+              "[CloudStream Load Before Sources]",
+              loadError.message
+            );
+          }
+
+          const requestedSeason =
+            Number(
+              req.query.season
             );
 
-          return res.json({
-            ok:
-              true,
+          const requestedEpisode =
+            Number(
+              req.query.episode
+            );
 
-            provider:
-              item.providerName,
+          let data =
+            safeString(
+              req.query.data
+            );
 
-            sources
-          });
+          /*
+           * If the frontend supplied the actual
+           * CloudStream data, use it directly.
+           */
+          if (
+            !data
+          ) {
+            data =
+              safeString(
+                loaded?.data
+              );
+          }
+
+          /*
+           * For TV/anime content, the required
+           * data normally lives on the episode.
+           */
+          if (
+            !data &&
+            loaded &&
+            Array.isArray(
+              loaded.episodes
+            ) &&
+            loaded.episodes.length
+          ) {
+            let episode =
+              loaded.episodes[0];
+
+            if (
+              Number.isFinite(
+                requestedSeason
+              ) &&
+              Number.isFinite(
+                requestedEpisode
+              )
+            ) {
+              episode =
+                loaded.episodes.find(
+                  candidate =>
+                    Number(
+                      candidate?.season
+                    ) ===
+                      requestedSeason &&
+                    Number(
+                      candidate?.episode
+                    ) ===
+                      requestedEpisode
+                ) ||
+                episode;
+            }
+
+            data =
+              safeString(
+                episode?.data
+              );
+          }
+
+          /*
+           * Finally fall back to the cached
+           * item's data.
+           */
+          if (
+            !data
+          ) {
+            data =
+              safeString(
+                item.data
+              );
+          }
+
+          if (
+            data
+          ) {
+            const sourceItem =
+              loaded ||
+              item;
+
+            const sources =
+              await bridgeSources(
+                sourceItem,
+                data
+              );
+
+            /*
+             * If the runtime found sources,
+             * return them immediately.
+             */
+            if (
+              sources.length
+            ) {
+              return res.json({
+                ok:
+                  true,
+
+                provider:
+                  sourceItem.providerName ||
+                  item.providerName,
+
+                sources
+              });
+            }
+
+            console.warn(
+              "[CloudStream Sources] Runtime returned no sources"
+            );
+          } else {
+            console.warn(
+              "[CloudStream Sources] No CloudStream data available"
+            );
+          }
         } catch (
           error
         ) {
@@ -2818,8 +3260,11 @@ app.get(
       }
 
       /*
-       * Native provider.
+       * ======================================================
+       * NATIVE PROVIDER FALLBACK
+       * ======================================================
        */
+
       const provider =
         providers.get(
           item.providerId
@@ -2918,6 +3363,9 @@ app.get(
 app.get(
   "/api/health",
   (req, res) => {
+    const enabled =
+      getEnabledExtensions();
+
     res.json({
       ok:
         true,
@@ -2939,9 +3387,11 @@ app.get(
             ),
 
           url:
-            BRIDGE_URL
-              ? BRIDGE_URL
-              : null
+            BRIDGE_URL ||
+            null,
+
+          timeoutMs:
+            BRIDGE_TIMEOUT_MS
         },
 
       extensions:
@@ -2954,8 +3404,13 @@ app.get(
               : 0,
 
           enabled:
-            getEnabledExtensions()
-              .length,
+            enabled.length,
+
+          enabledNames:
+            enabled.map(
+              extension =>
+                extension.name
+            ),
 
           updatedAt:
             extensionState.updatedAt
@@ -3025,8 +3480,25 @@ app.use(
 let lastExtensionSync =
   0;
 
+let startupComplete =
+  false;
+
 async function startupSync() {
   try {
+    console.log(
+      "================================================"
+    );
+
+    console.log(
+      "[Startup] Mediav2 starting"
+    );
+
+    console.log(
+      `[Startup] CloudStream bridge: ${
+        BRIDGE_URL || "disabled"
+      }`
+    );
+
     console.log(
       "[Startup] Syncing CloudStream repositories..."
     );
@@ -3037,8 +3509,8 @@ async function startupSync() {
       Date.now();
 
     /*
-     * Populate the library from real provider
-     * results. Nothing fake is inserted.
+     * Populate the library from actual
+     * provider home results.
      */
     const home =
       await homeAllProviders({
@@ -3054,8 +3526,27 @@ async function startupSync() {
       );
     }
 
+    startupComplete =
+      true;
+
     console.log(
       `[Startup] Library contains ${mediaLibrary.length} items.`
+    );
+
+    console.log(
+      `[Startup] Enabled CloudStream extensions: ${
+        getEnabledExtensions()
+          .map(
+            extension =>
+              extension.name
+          )
+          .join(", ") ||
+        "none"
+      }`
+    );
+
+    console.log(
+      "================================================"
     );
   } catch (
     error
@@ -3064,8 +3555,19 @@ async function startupSync() {
       "[Startup Sync]",
       error.message
     );
+
+    /*
+     * Keep the HTTP server alive even when
+     * an external repository temporarily fails.
+     */
+    startupComplete =
+      true;
   }
 }
+
+/* ============================================================
+   SCHEDULED EXTENSION SYNC
+============================================================ */
 
 setInterval(
   async () => {
@@ -3084,10 +3586,36 @@ setInterval(
     }
 
     try {
+      console.log(
+        "[Scheduled Extension Sync] Starting..."
+      );
+
       await syncExtensions();
 
       lastExtensionSync =
         Date.now();
+
+      /*
+       * Refresh the library after extension
+       * metadata has been updated.
+       */
+      const home =
+        await homeAllProviders({
+          limit:
+            100
+        });
+
+      if (
+        home.length
+      ) {
+        mergeIntoLibrary(
+          home
+        );
+      }
+
+      console.log(
+        "[Scheduled Extension Sync] Complete."
+      );
     } catch (
       error
     ) {
@@ -3100,6 +3628,10 @@ setInterval(
   15 * 60 * 1000
 );
 
+/* ============================================================
+   SERVER
+============================================================ */
+
 app.listen(
   PORT,
   async () => {
@@ -3110,3 +3642,27 @@ app.listen(
     await startupSync();
   }
 );
+
+/* ============================================================
+   PROCESS SAFETY
+============================================================ */
+
+process.on(
+  "unhandledRejection",
+  error => {
+    console.error(
+      "[Process] Unhandled rejection:",
+      error
+    );
+  }
+);
+
+process.on(
+  "uncaughtException",
+  error => {
+    console.error(
+      "[Process] Uncaught exception:",
+      error
+    );
+  }
+); 
