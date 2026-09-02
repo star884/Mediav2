@@ -11,19 +11,21 @@
 <style>
 :root{
     --bg:#080b10;
+    --bg2:#0c1016;
     --panel:#10151d;
     --panel2:#151b24;
     --panel3:#1b222d;
-    --border:#252d38;
-    --border2:#344052;
-    --text:#f3f6fa;
-    --muted:#8d98a8;
+    --border:#242c37;
+    --border2:#354152;
+    --text:#f4f7fb;
+    --muted:#8e99a8;
     --accent:#65a8ff;
-    --accent2:#8abaff;
-    --danger:#ff6574;
-    --success:#63d89b;
-    --warning:#f3c969;
-    --radius:14px;
+    --accent2:#8bbcff;
+    --success:#62d59a;
+    --danger:#ff6877;
+    --warning:#eac568;
+    --radius:15px;
+    --shadow:0 18px 50px rgba(0,0,0,.28);
 }
 
 *{
@@ -41,9 +43,9 @@ body{
     overflow-x:hidden;
     background:
         radial-gradient(
-            circle at 50% -10%,
-            rgba(101,168,255,.08),
-            transparent 35%
+            circle at 50% -20%,
+            rgba(101,168,255,.09),
+            transparent 42%
         ),
         var(--bg);
     color:var(--text);
@@ -78,56 +80,62 @@ select:focus-visible{
     outline-offset:2px;
 }
 
-header{
+/* ============================================================
+   HEADER
+============================================================ */
+
+.topbar{
     position:sticky;
     top:0;
-    z-index:50;
-    display:grid;
-    grid-template-columns:auto minmax(180px,720px) auto;
-    align-items:center;
-    gap:14px;
-    padding:
-        calc(12px + env(safe-area-inset-top))
-        18px
-        12px;
-    background:rgba(8,11,16,.94);
+    z-index:80;
+    background:rgba(8,11,16,.93);
     backdrop-filter:blur(20px);
     -webkit-backdrop-filter:blur(20px);
     border-bottom:1px solid var(--border);
 }
 
-.logo{
+.topbar-inner{
+    width:min(1500px,100%);
+    margin:auto;
+    display:grid;
+    grid-template-columns:auto minmax(220px,760px) auto;
+    align-items:center;
+    gap:15px;
+    padding:
+        calc(11px + env(safe-area-inset-top))
+        18px
+        11px;
+}
+
+.brand{
     display:flex;
     align-items:center;
     gap:9px;
+    font-weight:850;
     font-size:20px;
-    font-weight:800;
     white-space:nowrap;
 }
 
-.logo-mark{
-    width:30px;
-    height:30px;
+.brand-mark{
+    width:31px;
+    height:31px;
     display:grid;
     place-items:center;
     border-radius:9px;
     background:var(--accent);
-    color:#07101d;
-    font-size:15px;
-    font-weight:900;
+    color:#06101c;
+    font-size:14px;
+    font-weight:950;
 }
 
-.search{
-    width:100%;
-}
-
-.search-box{
+.search-wrap{
     position:relative;
+    width:100%;
 }
 
-.search input{
+.search-input{
     width:100%;
-    min-height:44px;
+    min-height:45px;
     padding:11px 44px 11px 16px;
     border:1px solid var(--border);
     border-radius:999px;
@@ -136,27 +144,27 @@ header{
     outline:none;
 }
 
-.search input::placeholder{
+.search-input::placeholder{
     color:var(--muted);
 }
 
-.search input:focus{
+.search-input:focus{
     border-color:var(--accent);
     box-shadow:0 0 0 3px rgba(101,168,255,.1);
 }
 
 .search-clear{
     position:absolute;
-    top:50%;
     right:6px;
-    width:32px;
-    height:32px;
+    top:50%;
     transform:translateY(-50%);
+    width:33px;
+    height:33px;
     border:0;
     border-radius:50%;
     background:transparent;
     color:var(--muted);
-    font-size:18px;
+    font-size:19px;
 }
 
 .search-clear:hover{
@@ -164,32 +172,31 @@ header{
     color:var(--text);
 }
 
-.controls{
+.top-actions{
     display:flex;
-    align-items:center;
-    gap:8px;
+    gap:7px;
 }
 
-select,
-.btn{
-    min-height:42px;
+.btn,
+select{
+    min-height:41px;
     border:1px solid var(--border);
     border-radius:10px;
-    padding:9px 12px;
+    padding:8px 12px;
     background:var(--panel);
     color:var(--text);
 }
 
-select:hover,
-.btn:hover{
+.btn:hover,
+select:hover{
     border-color:var(--border2);
 }
 
 .btn-primary{
-    background:var(--accent);
     border-color:var(--accent);
-    color:#07101d;
-    font-weight:700;
+    background:var(--accent);
+    color:#06101c;
+    font-weight:750;
 }
 
 .btn-primary:hover{
@@ -197,47 +204,148 @@ select:hover,
     background:var(--accent2);
 }
 
-.btn-icon{
-    width:42px;
+.icon-btn{
+    width:41px;
     padding:0;
     display:grid;
     place-items:center;
 }
 
+/* ============================================================
+   MAIN
+============================================================ */
+
 main{
     width:min(1500px,100%);
-    margin:0 auto;
-    padding:20px;
+    margin:auto;
+    padding:22px 20px 80px;
 }
 
-.toolbar{
+.hero{
+    position:relative;
+    min-height:235px;
+    margin-bottom:28px;
+    padding:28px;
+    display:flex;
+    align-items:flex-end;
+    overflow:hidden;
+    border:1px solid var(--border);
+    border-radius:19px;
+    background:
+        linear-gradient(
+            135deg,
+            rgba(101,168,255,.08),
+            rgba(16,21,29,.96)
+        );
+}
+
+.hero::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    background:
+        radial-gradient(
+            circle at 80% 30%,
+            rgba(101,168,255,.14),
+            transparent 33%
+        );
+    pointer-events:none;
+}
+
+.hero-content{
+    position:relative;
+    z-index:1;
+    max-width:700px;
+}
+
+.hero-kicker{
+    color:var(--accent);
+    text-transform:uppercase;
+    letter-spacing:.13em;
+    font-size:11px;
+    font-weight:850;
+}
+
+.hero h1{
+    margin:8px 0 8px;
+    font-size:clamp(28px,5vw,48px);
+    line-height:1;
+}
+
+.hero p{
+    max-width:620px;
+    margin:0;
+    color:var(--muted);
+    line-height:1.55;
+}
+
+.hero-actions{
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+    margin-top:17px;
+}
+
+.section{
+    margin-top:30px;
+}
+
+.section-head{
     display:flex;
     align-items:center;
     justify-content:space-between;
-    gap:12px;
-    margin-bottom:18px;
+    gap:10px;
+    margin-bottom:13px;
 }
 
-.status{
-    min-width:0;
-    display:flex;
-    flex-direction:column;
-    gap:4px;
+.section-title{
+    margin:0;
+    font-size:20px;
+    font-weight:800;
 }
 
-.status-main{
-    font-weight:700;
-}
-
-.status-sub{
+.section-subtitle{
+    margin-top:3px;
     color:var(--muted);
+    font-size:12px;
+}
+
+.section-action{
+    border:0;
+    background:transparent;
+    color:var(--accent);
     font-size:13px;
 }
 
-.view-controls{
+/* ============================================================
+   FILTERS
+============================================================ */
+
+.filters{
     display:flex;
     gap:8px;
+    flex-wrap:wrap;
+    margin-bottom:20px;
 }
+
+.filter{
+    min-height:38px;
+    padding:7px 12px;
+    border:1px solid var(--border);
+    border-radius:999px;
+    background:var(--panel);
+    color:var(--muted);
+}
+
+.filter.active{
+    border-color:var(--accent);
+    background:rgba(101,168,255,.1);
+    color:var(--text);
+}
+
+/* ============================================================
+   CARDS
+============================================================ */
 
 .grid{
     display:grid;
@@ -264,7 +372,7 @@ main{
 .card:hover{
     transform:translateY(-3px);
     border-color:var(--border2);
-    box-shadow:0 12px 30px rgba(0,0,0,.2);
+    box-shadow:0 12px 32px rgba(0,0,0,.25);
 }
 
 .poster-wrap{
@@ -286,13 +394,12 @@ main{
     height:100%;
     display:grid;
     place-items:center;
-    padding:16px;
-    color:var(--muted);
+    padding:18px;
     text-align:center;
-    font-size:14px;
+    color:var(--muted);
 }
 
-.badges{
+.card-badges{
     position:absolute;
     top:8px;
     left:8px;
@@ -303,39 +410,50 @@ main{
 }
 
 .badge{
+    min-height:23px;
+    max-width:100%;
     display:inline-flex;
     align-items:center;
-    min-height:24px;
     padding:3px 7px;
-    border-radius:7px;
-    background:rgba(8,11,16,.8);
-    color:var(--text);
-    font-size:11px;
-    font-weight:700;
-    backdrop-filter:blur(8px);
-}
-
-.badge-provider{
-    max-width:100%;
     overflow:hidden;
     text-overflow:ellipsis;
     white-space:nowrap;
+    border-radius:7px;
+    background:rgba(8,11,16,.82);
+    color:var(--text);
+    font-size:10px;
+    font-weight:700;
+    backdrop-filter:blur(9px);
+}
+
+.progress-bar{
+    position:absolute;
+    bottom:0;
+    left:0;
+    right:0;
+    height:4px;
+    background:rgba(0,0,0,.5);
+}
+
+.progress-fill{
+    height:100%;
+    background:var(--accent);
 }
 
 .card-body{
-    padding:12px;
+    padding:11px;
 }
 
-.title{
+.card-title{
     overflow:hidden;
     text-overflow:ellipsis;
     white-space:nowrap;
     font-weight:750;
 }
 
-.meta{
-    margin-top:5px;
+.card-meta{
     min-height:18px;
+    margin-top:5px;
     overflow:hidden;
     text-overflow:ellipsis;
     white-space:nowrap;
@@ -345,7 +463,7 @@ main{
 
 .card-actions{
     display:grid;
-    grid-template-columns:1fr auto;
+    grid-template-columns:1fr 38px;
     gap:7px;
     margin-top:10px;
 }
@@ -354,22 +472,28 @@ main{
     min-height:36px;
 }
 
-.favorite{
+.favorite-btn{
     width:38px;
     padding:0;
+    display:grid;
+    place-items:center;
     border:1px solid var(--border);
     border-radius:9px;
     background:var(--panel2);
     color:var(--text);
 }
 
-.favorite.active{
-    color:var(--accent);
+.favorite-btn.active{
     border-color:var(--accent);
+    color:var(--accent);
 }
 
+/* ============================================================
+   EMPTY / LOADING
+============================================================ */
+
 .empty{
-    padding:70px 20px;
+    padding:65px 20px;
     text-align:center;
     color:var(--muted);
 }
@@ -381,7 +505,7 @@ main{
     font-size:17px;
 }
 
-.loading{
+.loader{
     display:flex;
     justify-content:center;
     padding:35px;
@@ -397,19 +521,21 @@ main{
 }
 
 @keyframes spin{
-    to{
-        transform:rotate(360deg);
-    }
+    to{transform:rotate(360deg)}
 }
+
+/* ============================================================
+   MODALS
+============================================================ */
 
 .overlay{
     position:fixed;
     inset:0;
-    z-index:100;
+    z-index:150;
     display:none;
     align-items:center;
     justify-content:center;
-    padding:18px;
+    padding:16px;
     background:rgba(0,0,0,.84);
 }
 
@@ -419,25 +545,26 @@ main{
 
 .modal{
     width:min(1100px,100%);
-    max-height:calc(100vh - 36px);
+    max-height:calc(100vh - 32px);
     overflow:auto;
     border:1px solid var(--border);
-    border-radius:var(--radius);
+    border-radius:16px;
     background:var(--panel);
-    box-shadow:0 30px 100px rgba(0,0,0,.5);
+    box-shadow:var(--shadow);
 }
 
 .modal-head{
     position:sticky;
     top:0;
-    z-index:2;
+    z-index:3;
+    min-height:58px;
     display:flex;
     align-items:center;
     justify-content:space-between;
-    gap:15px;
-    padding:13px 16px;
+    gap:12px;
+    padding:10px 14px;
     background:rgba(16,21,29,.95);
-    backdrop-filter:blur(12px);
+    backdrop-filter:blur(14px);
     border-bottom:1px solid var(--border);
 }
 
@@ -446,7 +573,7 @@ main{
     overflow:hidden;
     text-overflow:ellipsis;
     white-space:nowrap;
-    font-weight:750;
+    font-weight:800;
 }
 
 .modal-close{
@@ -464,39 +591,43 @@ main{
     background:var(--panel3);
 }
 
-.player{
+/* ============================================================
+   PLAYER
+============================================================ */
+
+.player-shell{
     background:#000;
 }
 
 video{
     width:100%;
     max-height:72vh;
-    min-height:220px;
+    min-height:230px;
     display:block;
     background:#000;
 }
 
 .player-info{
-    padding:14px 16px 18px;
+    padding:14px;
 }
 
-.player-status{
+.player-state{
     color:var(--muted);
     font-size:13px;
 }
 
-.sources{
+.source-list{
     display:flex;
     flex-wrap:wrap;
-    gap:8px;
+    gap:7px;
     margin-top:12px;
 }
 
 .source-btn{
     min-height:38px;
+    padding:7px 11px;
     border:1px solid var(--border);
     border-radius:9px;
-    padding:7px 11px;
     background:var(--panel2);
     color:var(--text);
 }
@@ -510,6 +641,17 @@ video{
     color:var(--accent);
 }
 
+.player-actions{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    margin-top:12px;
+}
+
+/* ============================================================
+   DETAIL
+============================================================ */
+
 .detail{
     display:grid;
     grid-template-columns:220px minmax(0,1fr);
@@ -517,41 +659,38 @@ video{
     padding:20px;
 }
 
-.detail-poster{
+.detail-poster,
+.detail-placeholder{
     width:100%;
     aspect-ratio:2/3;
-    object-fit:cover;
     border-radius:10px;
     background:var(--panel2);
 }
 
+.detail-poster{
+    display:block;
+    object-fit:cover;
+}
+
 .detail-placeholder{
-    width:100%;
-    aspect-ratio:2/3;
     display:grid;
     place-items:center;
-    padding:15px;
-    border-radius:10px;
-    background:var(--panel2);
+    padding:16px;
     color:var(--muted);
     text-align:center;
 }
 
-.detail-info{
-    min-width:0;
-}
-
 .detail-title{
     margin:0;
-    font-size:27px;
-    line-height:1.15;
+    font-size:30px;
+    line-height:1.08;
 }
 
 .detail-meta{
     display:flex;
     flex-wrap:wrap;
-    gap:7px;
-    margin-top:10px;
+    gap:6px;
+    margin-top:11px;
 }
 
 .detail-chip{
@@ -570,15 +709,19 @@ video{
     white-space:pre-wrap;
 }
 
-.detail-actions{
+.detail-buttons{
     display:flex;
     flex-wrap:wrap;
     gap:8px;
     margin-top:18px;
 }
 
+/* ============================================================
+   EXTENSIONS
+============================================================ */
+
 .extension-panel{
-    padding:18px 20px 20px;
+    padding:15px;
 }
 
 .extension-list{
@@ -588,21 +731,21 @@ video{
 
 .extension{
     display:flex;
-    align-items:center;
     justify-content:space-between;
+    align-items:center;
     gap:12px;
-    padding:11px 12px;
+    padding:12px;
     border:1px solid var(--border);
-    border-radius:10px;
+    border-radius:11px;
     background:var(--panel2);
 }
 
 .extension-name{
-    font-weight:650;
+    font-weight:700;
 }
 
 .extension-meta{
-    margin-top:3px;
+    margin-top:4px;
     color:var(--muted);
     font-size:12px;
 }
@@ -611,24 +754,33 @@ video{
     flex:0 0 auto;
     padding:5px 8px;
     border-radius:7px;
-    font-size:11px;
-    font-weight:700;
+    font-size:10px;
+    font-weight:800;
 }
 
 .extension-status.ok{
     color:var(--success);
-    background:rgba(99,216,155,.08);
+    background:rgba(98,213,154,.08);
+}
+
+.extension-status.warning{
+    color:var(--warning);
+    background:rgba(234,197,105,.08);
 }
 
 .extension-status.bad{
     color:var(--danger);
-    background:rgba(255,101,116,.08);
+    background:rgba(255,104,119,.08);
 }
 
-.toast-container{
+/* ============================================================
+   TOAST
+============================================================ */
+
+.toasts{
     position:fixed;
-    right:16px;
-    bottom:16px;
+    right:14px;
+    bottom:14px;
     z-index:300;
     display:flex;
     flex-direction:column;
@@ -638,30 +790,31 @@ video{
 }
 
 .toast{
-    max-width:min(420px,calc(100vw - 32px));
+    max-width:min(420px,calc(100vw - 28px));
     padding:11px 14px;
     border:1px solid var(--border);
     border-radius:10px;
     background:var(--panel);
     color:var(--text);
-    box-shadow:0 12px 35px rgba(0,0,0,.3);
+    box-shadow:var(--shadow);
     font-size:13px;
-    animation:toast-in .18s ease;
-}
-
-.toast.error{
-    border-color:rgba(255,101,116,.5);
+    animation:toastIn .18s ease;
 }
 
 .toast.success{
-    border-color:rgba(99,216,155,.5);
+    border-color:rgba(98,213,154,.45);
 }
 
-@keyframes toast-in{
+.toast.error{
+    border-color:rgba(255,104,119,.45);
+}
+
+@keyframes toastIn{
     from{
         opacity:0;
         transform:translateY(8px);
     }
+
     to{
         opacity:1;
         transform:translateY(0);
@@ -672,114 +825,119 @@ video{
     display:none!important;
 }
 
-@media(max-width:1000px){
-    header{
+/* ============================================================
+   MOBILE
+============================================================ */
+
+@media(max-width:1050px){
+    .topbar-inner{
         grid-template-columns:auto 1fr;
     }
 
-    .search{
+    .search-wrap{
         grid-column:1/-1;
         grid-row:2;
     }
 
-    .controls{
+    .top-actions{
         justify-content:flex-end;
     }
 }
 
 @media(max-width:700px){
-    header{
+    .topbar-inner{
         padding-left:12px;
         padding-right:12px;
     }
 
-    .logo{
-        font-size:18px;
-    }
-
-    .controls select{
-        max-width:115px;
-    }
-
     main{
-        padding:14px;
+        padding:
+            14px
+            12px
+            70px;
     }
 
-    .toolbar{
-        align-items:flex-start;
-        flex-direction:column;
+    .hero{
+        min-height:220px;
+        padding:20px;
     }
 
-    .view-controls{
+    .hero h1{
+        font-size:31px;
+    }
+
+    .controls-mobile{
         width:100%;
-    }
-
-    .view-controls select,
-    .view-controls button{
-        flex:1;
     }
 
     .grid{
         grid-template-columns:
-            repeat(2,minmax(0,1fr));
-        gap:12px;
+            repeat(
+                2,
+                minmax(0,1fr)
+            );
+        gap:10px;
     }
 
     .card-body{
-        padding:10px;
+        padding:9px;
     }
 
     .detail{
         grid-template-columns:110px minmax(0,1fr);
         gap:14px;
-        padding:14px;
+        padding:13px;
     }
 
     .detail-title{
         font-size:20px;
     }
 
-    .detail-description{
-        grid-column:1/-1;
-    }
-
-    .detail-actions{
+    .detail-description,
+    .detail-buttons{
         grid-column:1/-1;
     }
 
     .overlay{
-        padding:8px;
+        padding:7px;
     }
 
     .modal{
-        max-height:calc(100vh - 16px);
+        max-height:calc(100vh - 14px);
     }
 
     video{
-        min-height:180px;
+        min-height:185px;
+    }
+
+    .extension{
+        align-items:flex-start;
     }
 }
 
-@media(max-width:420px){
-    .controls{
-        width:100%;
+@media(max-width:430px){
+    .brand{
+        font-size:18px;
     }
 
-    .controls select{
-        flex:1;
-        max-width:none;
-    }
-
-    .controls .btn{
-        width:42px;
+    .top-actions .btn:not(.icon-btn){
+        display:none;
     }
 
     .grid{
-        gap:9px;
+        gap:8px;
     }
 
-    .badge{
-        font-size:10px;
+    .card-actions{
+        grid-template-columns:1fr 34px;
+    }
+
+    .favorite-btn{
+        width:34px;
+    }
+
+    .hero-actions .btn{
+        flex:1;
     }
 }
 </style>
@@ -788,84 +946,38 @@ video{
 
 <body>
 
-<header>
+<header class="topbar">
 
 ```
-<div class="logo">
-    <span class="logo-mark">M</span>
-    <span>Mediav2</span>
-</div>
+<div class="topbar-inner">
 
-<div class="search">
-    <div class="search-box">
+    <div class="brand">
+        <span class="brand-mark">M</span>
+        <span>Mediav2</span>
+    </div>
+
+    <div class="search-wrap">
+
         <input
             id="searchInput"
+            class="search-input"
             type="search"
             autocomplete="off"
             spellcheck="false"
             placeholder="Search movies, series, anime..."
-            aria-label="Search everything"
+            aria-label="Search"
         >
+
         <button
             id="searchClear"
             class="search-clear hidden"
             type="button"
             aria-label="Clear search"
         >×</button>
-    </div>
-</div>
 
-<div class="controls">
-
-    <select
-        id="typeSelect"
-        aria-label="Filter by type"
-    >
-        <option value="all">All</option>
-        <option value="movie">Movies</option>
-        <option value="series">Series</option>
-        <option value="anime">Anime</option>
-        <option value="other">Other</option>
-    </select>
-
-    <select
-        id="providerSelect"
-        aria-label="Filter by provider"
-    >
-        <option value="all">All providers</option>
-    </select>
-
-    <button
-        id="refreshButton"
-        class="btn btn-primary btn-icon"
-        type="button"
-        aria-label="Refresh"
-        title="Refresh"
-    >↻</button>
-
-</div>
-```
-
-</header>
-
-<main>
-
-```
-<div class="toolbar">
-
-    <div class="status">
-        <div
-            id="statusText"
-            class="status-main"
-        >Ready</div>
-
-        <div
-            id="statusSub"
-            class="status-sub"
-        >Loading library...</div>
     </div>
 
-    <div class="view-controls">
+    <div class="top-actions">
 
         <button
             id="extensionsButton"
@@ -875,32 +987,222 @@ video{
             Extensions
         </button>
 
+        <button
+            id="refreshButton"
+            class="btn btn-primary icon-btn"
+            type="button"
+            title="Synchronize"
+            aria-label="Synchronize"
+        >
+            ↻
+        </button>
+
     </div>
 
 </div>
+```
+
+</header>
+
+<main>
+
+```
+<section class="hero">
+
+    <div class="hero-content">
+
+        <div class="hero-kicker">
+            Your media library
+        </div>
+
+        <h1>
+            Everything in one place.
+        </h1>
+
+        <p>
+            Search across your enabled providers,
+            pick a source, resume where you stopped,
+            and keep your library in one interface.
+        </p>
+
+        <div class="hero-actions">
+
+            <button
+                id="heroSearchButton"
+                class="btn btn-primary"
+                type="button"
+            >
+                Search now
+            </button>
+
+            <button
+                id="heroExtensionsButton"
+                class="btn"
+                type="button"
+            >
+                Manage extensions
+            </button>
+
+        </div>
+
+    </div>
+
+</section>
+
+<section class="section">
+
+    <div class="filters">
+
+        <button
+            class="filter active"
+            data-type="all"
+            type="button"
+        >
+            All
+        </button>
+
+        <button
+            class="filter"
+            data-type="movie"
+            type="button"
+        >
+            Movies
+        </button>
+
+        <button
+            class="filter"
+            data-type="series"
+            type="button"
+        >
+            Series
+        </button>
+
+        <button
+            class="filter"
+            data-type="anime"
+            type="button"
+        >
+            Anime
+        </button>
+
+        <button
+            class="filter"
+            data-type="other"
+            type="button"
+        >
+            Other
+        </button>
+
+    </div>
+
+</section>
 
 <section
-    id="results"
-    class="grid"
-    aria-live="polite"
-></section>
-
-<div
-    id="loading"
-    class="loading hidden"
+    id="continueSection"
+    class="section hidden"
 >
-    <div class="spinner"></div>
-</div>
 
-<div
-    id="empty"
-    class="empty hidden"
+    <div class="section-head">
+
+        <div>
+            <h2 class="section-title">
+                Continue Watching
+            </h2>
+
+            <div class="section-subtitle">
+                Pick up where you left off.
+            </div>
+        </div>
+
+    </div>
+
+    <div
+        id="continueGrid"
+        class="grid"
+    ></div>
+
+</section>
+
+<section
+    id="favoritesSection"
+    class="section hidden"
 >
-    <strong>Nothing found</strong>
-    <span id="emptyText">
-        Try another search.
-    </span>
-</div>
+
+    <div class="section-head">
+
+        <div>
+            <h2 class="section-title">
+                Favorites
+            </h2>
+
+            <div class="section-subtitle">
+                Your saved titles.
+            </div>
+        </div>
+
+        <button
+            id="clearFavorites"
+            class="section-action"
+            type="button"
+        >
+            Clear
+        </button>
+
+    </div>
+
+    <div
+        id="favoritesGrid"
+        class="grid"
+    ></div>
+
+</section>
+
+<section class="section">
+
+    <div class="section-head">
+
+        <div>
+            <h2
+                id="resultsTitle"
+                class="section-title"
+            >
+                Library
+            </h2>
+
+            <div
+                id="resultsSubtitle"
+                class="section-subtitle"
+            >
+                Loading...
+            </div>
+        </div>
+
+    </div>
+
+    <div
+        id="loading"
+        class="loader hidden"
+    >
+        <div class="spinner"></div>
+    </div>
+
+    <div
+        id="results"
+        class="grid"
+    ></div>
+
+    <div
+        id="empty"
+        class="empty hidden"
+    >
+        <strong>No titles found</strong>
+
+        <span id="emptyText">
+            Try a different search.
+        </span>
+    </div>
+
+</section>
 ```
 
 </main>
@@ -923,18 +1225,22 @@ video{
         <div
             id="playerTitle"
             class="modal-title"
-        >Player</div>
+        >
+            Player
+        </div>
 
         <button
             id="closePlayer"
             class="modal-close"
             type="button"
             aria-label="Close player"
-        >×</button>
+        >
+            ×
+        </button>
 
     </div>
 
-    <div class="player">
+    <div class="player-shell">
 
         <video
             id="video"
@@ -949,14 +1255,28 @@ video{
     <div class="player-info">
 
         <div
-            id="playerStatus"
-            class="player-status"
-        >Preparing playback...</div>
+            id="playerState"
+            class="player-state"
+        >
+            Preparing playback...
+        </div>
 
         <div
             id="sourceList"
-            class="sources"
+            class="source-list"
         ></div>
+
+        <div class="player-actions">
+
+            <button
+                id="fullscreenButton"
+                class="btn"
+                type="button"
+            >
+                Fullscreen
+            </button>
+
+        </div>
 
     </div>
 
@@ -972,7 +1292,7 @@ video{
     class="overlay"
     role="dialog"
     aria-modal="true"
-    aria-labelledby="detailModalTitle"
+    aria-labelledby="detailTitle"
 >
 
 ```
@@ -981,16 +1301,20 @@ video{
     <div class="modal-head">
 
         <div
-            id="detailModalTitle"
+            id="detailTitle"
             class="modal-title"
-        >Details</div>
+        >
+            Details
+        </div>
 
         <button
             id="closeDetail"
             class="modal-close"
             type="button"
             aria-label="Close details"
-        >×</button>
+        >
+            ×
+        </button>
 
     </div>
 
@@ -1022,14 +1346,18 @@ video{
         <div
             id="extensionsTitle"
             class="modal-title"
-        >Extensions</div>
+        >
+            Extensions
+        </div>
 
         <button
             id="closeExtensions"
             class="modal-close"
             type="button"
             aria-label="Close extensions"
-        >×</button>
+        >
+            ×
+        </button>
 
     </div>
 
@@ -1048,8 +1376,8 @@ video{
 </div>
 
 <div
-    id="toastContainer"
-    class="toast-container"
+    id="toasts"
+    class="toasts"
     aria-live="polite"
 ></div>
 
@@ -1057,97 +1385,296 @@ video{
 'use strict';
 
 /*
+    ============================================================
     Mediav2 frontend
+    ============================================================
 
-    Backend endpoints expected:
+    Uses the existing backend contract:
 
         GET  /api/health
-        GET  /api/providers
-        GET  /api/extensions
-        POST /api/extensions/sync
         GET  /api/library
         GET  /api/search?q=...
-        POST /api/sync
         GET  /api/title/:id
         GET  /api/sources/:id
+        GET  /api/extensions
+        POST /api/sync
+        POST /api/extensions/sync
 
-    The frontend never invents a playable URL.
-
-    Playback is always performed using a source returned
-    by the Mediav2 backend.
+    The frontend never fabricates a stream URL.
+    Every playable source must come from the backend.
 */
 
 const state = {
-    results: [],
+    allItems: [],
+    currentItems: [],
+    favorites: new Set(),
     currentTitle: null,
     currentSources: [],
     currentSourceIndex: -1,
+    selectedType: 'all',
     searchTimer: null,
-    searchController: null,
-    libraryController: null,
-    lastQuery: '',
-    lastMode: 'library',
-    loading: false,
-    syncInProgress: false
+    controller: null,
+    mode: 'library',
+    query: ''
 };
 
-const $ = id => document.getElementById(id);
+const $ = id =>
+    document.getElementById(id);
 
-const elements = {
-    searchInput: $('searchInput'),
-    searchClear: $('searchClear'),
-    typeSelect: $('typeSelect'),
-    providerSelect: $('providerSelect'),
-    refreshButton: $('refreshButton'),
-    extensionsButton: $('extensionsButton'),
+const el = {
+    search:
+        $('searchInput'),
 
-    results: $('results'),
-    loading: $('loading'),
-    empty: $('empty'),
-    emptyText: $('emptyText'),
+    searchClear:
+        $('searchClear'),
 
-    statusText: $('statusText'),
-    statusSub: $('statusSub'),
+    refresh:
+        $('refreshButton'),
 
-    playerOverlay: $('playerOverlay'),
-    playerTitle: $('playerTitle'),
-    video: $('video'),
-    playerStatus: $('playerStatus'),
-    sourceList: $('sourceList'),
-    closePlayer: $('closePlayer'),
+    extensions:
+        $('extensionsButton'),
 
-    detailOverlay: $('detailOverlay'),
-    detailModalTitle: $('detailModalTitle'),
-    detailContent: $('detailContent'),
-    closeDetail: $('closeDetail'),
+    heroSearch:
+        $('heroSearchButton'),
 
-    extensionsOverlay: $('extensionsOverlay'),
-    extensionList: $('extensionList'),
-    closeExtensions: $('closeExtensions'),
+    heroExtensions:
+        $('heroExtensionsButton'),
 
-    toastContainer: $('toastContainer')
+    filters:
+        [...document.querySelectorAll(
+            '[data-type]'
+        )],
+
+    results:
+        $('results'),
+
+    resultsTitle:
+        $('resultsTitle'),
+
+    resultsSubtitle:
+        $('resultsSubtitle'),
+
+    loading:
+        $('loading'),
+
+    empty:
+        $('empty'),
+
+    emptyText:
+        $('emptyText'),
+
+    continueSection:
+        $('continueSection'),
+
+    continueGrid:
+        $('continueGrid'),
+
+    favoritesSection:
+        $('favoritesSection'),
+
+    favoritesGrid:
+        $('favoritesGrid'),
+
+    clearFavorites:
+        $('clearFavorites'),
+
+    playerOverlay:
+        $('playerOverlay'),
+
+    playerTitle:
+        $('playerTitle'),
+
+    video:
+        $('video'),
+
+    playerState:
+        $('playerState'),
+
+    sourceList:
+        $('sourceList'),
+
+    closePlayer:
+        $('closePlayer'),
+
+    fullscreen:
+        $('fullscreenButton'),
+
+    detailOverlay:
+        $('detailOverlay'),
+
+    detailTitle:
+        $('detailTitle'),
+
+    detailContent:
+        $('detailContent'),
+
+    closeDetail:
+        $('closeDetail'),
+
+    extensionsOverlay:
+        $('extensionsOverlay'),
+
+    extensionList:
+        $('extensionList'),
+
+    closeExtensions:
+        $('closeExtensions'),
+
+    toasts:
+        $('toasts')
 };
 
-/* ---------------------------------------------------------
-   Utilities
---------------------------------------------------------- */
+/* ============================================================
+   LOCAL STORAGE
+============================================================ */
 
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
+function favoriteKey(id) {
+    return `mediav2:favorite:${id}`;
 }
 
+function progressKey(id) {
+    return `mediav2:progress:${id}`;
+}
+
+function loadLocalState() {
+    /*
+        Favorites are discovered by looking at localStorage.
+    */
+
+    state.favorites.clear();
+
+    for (
+        let i = 0;
+        i < localStorage.length;
+        i++
+    ) {
+        const key =
+            localStorage.key(i);
+
+        if (
+            key &&
+            key.startsWith(
+                'mediav2:favorite:'
+            )
+        ) {
+            state.favorites.add(
+                key.substring(
+                    'mediav2:favorite:'.length
+                )
+            );
+        }
+    }
+}
+
+function isFavorite(item) {
+    return Boolean(
+        item?.id &&
+        state.favorites.has(
+            String(item.id)
+        )
+    );
+}
+
+function toggleFavorite(item) {
+    if (!item?.id) {
+        return false;
+    }
+
+    const id =
+        String(item.id);
+
+    if (
+        state.favorites.has(id)
+    ) {
+        state.favorites.delete(id);
+
+        localStorage.removeItem(
+            favoriteKey(id)
+        );
+
+        return false;
+    }
+
+    state.favorites.add(id);
+
+    localStorage.setItem(
+        favoriteKey(id),
+        '1'
+    );
+
+    return true;
+}
+
+function getProgress(item) {
+    if (!item?.id) {
+        return 0;
+    }
+
+    const value =
+        Number(
+            localStorage.getItem(
+                progressKey(
+                    item.id
+                )
+            )
+        );
+
+    return Number.isFinite(value)
+        ? Math.max(0, value)
+        : 0;
+}
+
+function saveProgress(
+    item,
+    seconds
+) {
+    if (!item?.id) {
+        return;
+    }
+
+    const value =
+        Number(seconds);
+
+    if (
+        !Number.isFinite(value) ||
+        value < 0
+    ) {
+        return;
+    }
+
+    localStorage.setItem(
+        progressKey(item.id),
+        String(
+            Math.floor(value)
+        )
+    );
+}
+
+function clearProgress(item) {
+    if (!item?.id) {
+        return;
+    }
+
+    localStorage.removeItem(
+        progressKey(item.id)
+    );
+}
+
+/* ============================================================
+   HELPERS
+============================================================ */
+
 function normalizeType(value) {
-    const type = String(value || '')
+    const type =
+        String(
+            value || ''
+        )
         .trim()
         .toLowerCase();
 
     if (
         type === 'tvseries' ||
+        type === 'tv-series' ||
         type === 'tv series' ||
         type === 'series' ||
         type === 'show'
@@ -1172,276 +1699,96 @@ function normalizeType(value) {
 }
 
 function typeLabel(value) {
-    const type = normalizeType(value);
-
-    if (type === 'movie') return 'Movie';
-    if (type === 'series') return 'Series';
-    if (type === 'anime') return 'Anime';
-
-    return 'Other';
-}
-
-function formatDuration(seconds) {
-    const value = Number(seconds);
-
-    if (!Number.isFinite(value) || value <= 0) {
-        return '';
-    }
-
-    const total = Math.floor(value);
-    const hours = Math.floor(total / 3600);
-    const minutes = Math.floor((total % 3600) / 60);
-
-    if (hours > 0) {
-        return `${hours}h ${minutes}m`;
-    }
-
-    return `${minutes}m`;
-}
-
-function formatDate(value) {
-    if (!value) return '';
-
-    const date = new Date(value);
-
-    if (Number.isNaN(date.getTime())) {
-        return '';
-    }
-
-    return date.toLocaleDateString(
-        undefined,
-        {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric'
-        }
-    );
-}
-
-function showToast(message, type = '') {
-    const toast = document.createElement('div');
-
-    toast.className =
-        `toast${type ? ` ${type}` : ''}`;
-
-    toast.textContent = message;
-
-    elements.toastContainer.appendChild(toast);
-
-    setTimeout(() => {
-        toast.remove();
-    }, 3500);
-}
-
-function setStatus(main, sub = '') {
-    elements.statusText.textContent = main;
-    elements.statusSub.textContent = sub;
-}
-
-function setLoading(value) {
-    state.loading = value;
-    elements.loading.classList.toggle(
-        'hidden',
-        !value
-    );
-}
-
-function apiUrl(path, params = {}) {
-    const url = new URL(
-        path,
-        window.location.origin
-    );
-
-    Object.entries(params).forEach(
-        ([key, value]) => {
-            if (
-                value !== undefined &&
-                value !== null &&
-                value !== ''
-            ) {
-                url.searchParams.set(
-                    key,
-                    value
-                );
-            }
-        }
-    );
-
-    return url.toString();
-}
-
-async function request(
-    path,
-    options = {}
-) {
-    const response = await fetch(
-        path,
-        {
-            ...options,
-            headers: {
-                Accept: 'application/json',
-                ...(options.headers || {})
-            }
-        }
-    );
-
-    let data = null;
-
-    try {
-        data = await response.json();
-    } catch {
-        data = null;
-    }
-
-    if (!response.ok) {
-        const message =
-            data?.error ||
-            data?.message ||
-            `Request failed (${response.status})`;
-
-        throw new Error(message);
-    }
-
-    return data;
-}
-
-/* ---------------------------------------------------------
-   Local state
---------------------------------------------------------- */
-
-function favoriteKey(item) {
-    return `mediav2:favorite:${item?.id || ''}`;
-}
-
-function progressKey(item) {
-    return `mediav2:progress:${item?.id || ''}`;
-}
-
-function isFavorite(item) {
-    if (!item?.id) return false;
-
-    return (
-        localStorage.getItem(
-            favoriteKey(item)
-        ) === '1'
-    );
-}
-
-function toggleFavorite(item) {
-    if (!item?.id) return false;
-
-    const next = !isFavorite(item);
-
-    if (next) {
-        localStorage.setItem(
-            favoriteKey(item),
-            '1'
-        );
-    } else {
-        localStorage.removeItem(
-            favoriteKey(item)
-        );
-    }
-
-    return next;
-}
-
-function getProgress(item) {
-    if (!item?.id) return 0;
-
-    const value = Number(
-        localStorage.getItem(
-            progressKey(item)
-        )
-    );
-
-    return Number.isFinite(value)
-        ? value
-        : 0;
-}
-
-function saveProgress(item, seconds) {
-    if (!item?.id) return;
-
-    const value = Number(seconds);
-
-    if (
-        !Number.isFinite(value) ||
-        value < 0
+    switch (
+        normalizeType(value)
     ) {
-        return;
+        case 'movie':
+            return 'Movie';
+
+        case 'series':
+            return 'Series';
+
+        case 'anime':
+            return 'Anime';
+
+        default:
+            return 'Other';
     }
-
-    localStorage.setItem(
-        progressKey(item),
-        String(Math.floor(value))
-    );
 }
-
-function clearProgress(item) {
-    if (!item?.id) return;
-
-    localStorage.removeItem(
-        progressKey(item)
-    );
-}
-
-/* ---------------------------------------------------------
-   Normalization
---------------------------------------------------------- */
 
 function normalizeItem(item) {
-    if (!item || typeof item !== 'object') {
+    if (
+        !item ||
+        typeof item !== 'object'
+    ) {
         return null;
     }
 
     return {
         ...item,
-        id: String(
-            item.id ??
-            item.url ??
-            `${item.provider || 'unknown'}:${item.title || Math.random()}`
-        ),
+
+        id:
+            String(
+                item.id ??
+                item.sourceId ??
+                item.url ??
+                `${item.provider || 'provider'}:${item.title || 'unknown'}`
+            ),
+
         title:
             String(
                 item.title ??
                 item.name ??
                 'Untitled'
             ),
+
         provider:
             String(
                 item.provider ??
+                item.providerName ??
                 item.apiName ??
                 'Unknown'
             ),
+
         type:
             normalizeType(
                 item.type ??
                 item.tvType
             ),
+
         poster:
             item.poster ??
             item.posterUrl ??
             null,
-        url:
-            item.url ??
-            item.sourceUrl ??
+
+        backdrop:
+            item.backdrop ??
+            item.backdropUrl ??
             null,
+
         description:
-            item.description ??
-            '',
+            String(
+                item.description ??
+                ''
+            ),
+
         year:
             item.year ??
             item.releaseYear ??
             null,
-        duration:
-            item.duration ??
+
+        sourceId:
+            item.sourceId ??
+            item.id ??
             null
     };
 }
 
 function normalizeSource(source) {
-    if (!source || typeof source !== 'object') {
+    if (
+        !source ||
+        typeof source !== 'object'
+    ) {
         return null;
     }
 
@@ -1450,112 +1797,465 @@ function normalizeSource(source) {
         source.streamUrl ??
         source.link;
 
-    if (!url) {
+    if (
+        typeof url !== 'string' ||
+        !url.trim()
+    ) {
         return null;
     }
 
     return {
         ...source,
-        url: String(url),
+
+        url:
+            url.trim(),
+
         name:
             String(
                 source.name ??
+                source.title ??
                 source.quality ??
-                source.label ??
                 'Source'
             ),
+
         quality:
             source.quality ??
             null,
+
         format:
             String(
                 source.format ??
                 source.type ??
                 ''
             ).toLowerCase(),
+
+        mime:
+            source.mime ??
+            null,
+
         headers:
-            source.headers || null,
+            source.headers ??
+            null,
+
         referer:
-            source.referer ||
-            source.referrer ||
+            source.referer ??
+            source.referrer ??
             ''
     };
 }
 
-/* ---------------------------------------------------------
-   Provider filter
---------------------------------------------------------- */
-
-function populateProviders(
-    items = state.results
+function showToast(
+    message,
+    type = ''
 ) {
-    const current =
-        elements.providerSelect.value;
+    const node =
+        document.createElement(
+            'div'
+        );
 
-    const providers = [
-        ...new Set(
-            items
-                .map(item =>
-                    String(
-                        item?.provider || ''
-                    ).trim()
-                )
-                .filter(Boolean)
-        )
-    ].sort(
-        (a, b) =>
-            a.localeCompare(b)
+    node.className =
+        `toast${type ? ` ${type}` : ''}`;
+
+    node.textContent =
+        String(message);
+
+    el.toasts.appendChild(node);
+
+    setTimeout(
+        () => node.remove(),
+        3500
+    );
+}
+
+function setLoading(
+    active
+) {
+    el.loading.classList.toggle(
+        'hidden',
+        !active
+    );
+}
+
+function setEmpty(
+    active,
+    message
+) {
+    el.empty.classList.toggle(
+        'hidden',
+        !active
     );
 
-    elements.providerSelect.replaceChildren();
-
-    const all = document.createElement('option');
-
-    all.value = 'all';
-    all.textContent = 'All providers';
-
-    elements.providerSelect.appendChild(all);
-
-    providers.forEach(provider => {
-        const option =
-            document.createElement('option');
-
-        option.value = provider;
-        option.textContent = provider;
-
-        elements.providerSelect.appendChild(option);
-    });
-
-    if (
-        providers.includes(current)
-    ) {
-        elements.providerSelect.value =
-            current;
-    } else {
-        elements.providerSelect.value =
-            'all';
+    if (message) {
+        el.emptyText.textContent =
+            message;
     }
 }
 
-/* ---------------------------------------------------------
-   Rendering
---------------------------------------------------------- */
+/* ============================================================
+   SEARCH
+============================================================ */
 
-function createPoster(item) {
+async function performSearch(
+    query
+) {
+    const q =
+        String(query || '').trim();
+
+    if (!q) {
+        return loadLibrary();
+    }
+
+    if (state.controller) {
+        state.controller.abort();
+    }
+
+    const controller =
+        new AbortController();
+
+    state.controller =
+        controller;
+
+    state.mode =
+        'search';
+
+    state.query =
+        q;
+
+    setLoading(true);
+
+    setEmpty(false);
+
+    el.resultsTitle.textContent =
+        `Search results`;
+
+    el.resultsSubtitle.textContent =
+        `Searching across enabled providers...`;
+
+    try {
+        const params =
+            new URLSearchParams();
+
+        params.set(
+            'q',
+            q
+        );
+
+        if (
+            state.selectedType !==
+            'all'
+        ) {
+            params.set(
+                'type',
+                state.selectedType
+            );
+        }
+
+        const response =
+            await fetch(
+                `/api/search?${params.toString()}`,
+                {
+                    signal:
+                        controller.signal
+                }
+            );
+
+        const data =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data?.error ||
+                `Search failed (${response.status})`
+            );
+        }
+
+        const raw =
+            Array.isArray(data?.results)
+                ? data.results
+                : Array.isArray(data?.library)
+                    ? data.library
+                    : [];
+
+        const items =
+            raw
+                .map(normalizeItem)
+                .filter(Boolean);
+
+        state.currentItems =
+            items;
+
+        renderMain(
+            items
+        );
+
+        el.resultsSubtitle.textContent =
+            items.length === 1
+                ? '1 result'
+                : `${items.length} results`;
+
+        if (
+            !items.length
+        ) {
+            setEmpty(
+                true,
+                `No results were found for "${q}".`
+            );
+        }
+
+    } catch (error) {
+        if (
+            error.name ===
+            'AbortError'
+        ) {
+            return;
+        }
+
+        console.error(error);
+
+        el.results.replaceChildren();
+
+        setEmpty(
+            true,
+            error.message ||
+            'Search failed.'
+        );
+
+        el.resultsSubtitle.textContent =
+            'Search failed';
+
+        showToast(
+            error.message ||
+            'Search failed',
+            'error'
+        );
+
+    } finally {
+        setLoading(false);
+    }
+}
+
+/* ============================================================
+   LIBRARY
+============================================================ */
+
+async function loadLibrary() {
+    if (state.controller) {
+        state.controller.abort();
+    }
+
+    const controller =
+        new AbortController();
+
+    state.controller =
+        controller;
+
+    state.mode =
+        'library';
+
+    state.query =
+        '';
+
+    setLoading(true);
+
+    setEmpty(false);
+
+    el.resultsTitle.textContent =
+        'Library';
+
+    el.resultsSubtitle.textContent =
+        'Loading your media...';
+
+    try {
+        const params =
+            new URLSearchParams();
+
+        if (
+            state.selectedType !==
+            'all'
+        ) {
+            params.set(
+                'category',
+                state.selectedType
+            );
+        }
+
+        const response =
+            await fetch(
+                `/api/library?${params.toString()}`,
+                {
+                    signal:
+                        controller.signal
+                }
+            );
+
+        const data =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data?.error ||
+                `Library failed (${response.status})`
+            );
+        }
+
+        const raw =
+            Array.isArray(data?.library)
+                ? data.library
+                : Array.isArray(data)
+                    ? data
+                    : [];
+
+        const items =
+            raw
+                .map(normalizeItem)
+                .filter(Boolean);
+
+        state.allItems =
+            items;
+
+        state.currentItems =
+            items;
+
+        renderMain(
+            items
+        );
+
+        el.resultsSubtitle.textContent =
+            items.length === 1
+                ? '1 title available'
+                : `${items.length} titles available`;
+
+        if (
+            items.length === 0
+        ) {
+            setEmpty(
+                true,
+                'Your library does not contain matching titles yet.'
+            );
+        }
+
+        renderContinue();
+        renderFavorites();
+
+    } catch (error) {
+        if (
+            error.name ===
+            'AbortError'
+        ) {
+            return;
+        }
+
+        console.error(error);
+
+        el.results.replaceChildren();
+
+        setEmpty(
+            true,
+            error.message ||
+            'Unable to load library.'
+        );
+
+        el.resultsSubtitle.textContent =
+            'Library unavailable';
+
+        showToast(
+            error.message ||
+            'Unable to load library',
+            'error'
+        );
+
+    } finally {
+        setLoading(false);
+    }
+}
+
+/* ============================================================
+   MAIN RENDER
+============================================================ */
+
+function renderMain(
+    items
+) {
+    el.results.replaceChildren();
+
+    const filtered =
+        items.filter(item => {
+            if (
+                state.selectedType !==
+                'all' &&
+                normalizeType(item.type) !==
+                    state.selectedType
+            ) {
+                return false;
+            }
+
+            return true;
+        });
+
+    if (
+        filtered.length === 0
+    ) {
+        setEmpty(
+            true
+        );
+
+        return;
+    }
+
+    setEmpty(
+        false
+    );
+
+    const fragment =
+        document.createDocumentFragment();
+
+    filtered.forEach(
+        item => {
+            fragment.appendChild(
+                createCard(item)
+            );
+        }
+    );
+
+    el.results.appendChild(
+        fragment
+    );
+}
+
+function createPoster(
+    item
+) {
     const wrap =
-        document.createElement('div');
+        document.createElement(
+            'div'
+        );
 
-    wrap.className = 'poster-wrap';
+    wrap.className =
+        'poster-wrap';
 
     if (item.poster) {
         const image =
-            document.createElement('img');
+            document.createElement(
+                'img'
+            );
 
-        image.className = 'poster';
-        image.alt = item.title;
-        image.loading = 'lazy';
-        image.decoding = 'async';
-        image.src = item.poster;
+        image.className =
+            'poster';
+
+        image.alt =
+            item.title;
+
+        image.loading =
+            'lazy';
+
+        image.decoding =
+            'async';
+
+        image.referrerPolicy =
+            'no-referrer';
+
+        image.src =
+            item.poster;
 
         image.addEventListener(
             'error',
@@ -1563,7 +2263,9 @@ function createPoster(item) {
                 image.remove();
 
                 const placeholder =
-                    document.createElement('div');
+                    document.createElement(
+                        'div'
+                    );
 
                 placeholder.className =
                     'poster-placeholder';
@@ -1575,13 +2277,20 @@ function createPoster(item) {
                     placeholder
                 );
             },
-            { once: true }
+            {
+                once:true
+            }
         );
 
-        wrap.appendChild(image);
+        wrap.appendChild(
+            image
+        );
+
     } else {
         const placeholder =
-            document.createElement('div');
+            document.createElement(
+                'div'
+            );
 
         placeholder.className =
             'poster-placeholder';
@@ -1595,25 +2304,38 @@ function createPoster(item) {
     }
 
     const badges =
-        document.createElement('div');
+        document.createElement(
+            'div'
+        );
 
-    badges.className = 'badges';
+    badges.className =
+        'card-badges';
 
     const typeBadge =
-        document.createElement('span');
+        document.createElement(
+            'span'
+        );
 
-    typeBadge.className = 'badge';
+    typeBadge.className =
+        'badge';
+
     typeBadge.textContent =
-        typeLabel(item.type);
+        typeLabel(
+            item.type
+        );
 
-    badges.appendChild(typeBadge);
+    badges.appendChild(
+        typeBadge
+    );
 
     if (item.provider) {
         const providerBadge =
-            document.createElement('span');
+            document.createElement(
+                'span'
+            );
 
         providerBadge.className =
-            'badge badge-provider';
+            'badge';
 
         providerBadge.textContent =
             item.provider;
@@ -1623,89 +2345,149 @@ function createPoster(item) {
         );
     }
 
-    wrap.appendChild(badges);
+    wrap.appendChild(
+        badges
+    );
+
+    const progress =
+        getProgress(item);
+
+    if (
+        progress > 0
+    ) {
+        const bar =
+            document.createElement(
+                'div'
+            );
+
+        bar.className =
+            'progress-bar';
+
+        const fill =
+            document.createElement(
+                'div'
+            );
+
+        fill.className =
+            'progress-fill';
+
+        fill.style.width =
+            '18%';
+
+        bar.appendChild(
+            fill
+        );
+
+        wrap.appendChild(
+            bar
+        );
+    }
 
     return wrap;
 }
 
-function createCard(item) {
+function createCard(
+    item
+) {
     const card =
-        document.createElement('article');
+        document.createElement(
+            'article'
+        );
 
-    card.className = 'card';
+    card.className =
+        'card';
 
     const poster =
         createPoster(item);
 
     const body =
-        document.createElement('div');
+        document.createElement(
+            'div'
+        );
 
-    body.className = 'card-body';
+    body.className =
+        'card-body';
 
     const title =
-        document.createElement('div');
+        document.createElement(
+            'div'
+        );
 
-    title.className = 'title';
-    title.title = item.title;
-    title.textContent = item.title;
+    title.className =
+        'card-title';
+
+    title.textContent =
+        item.title;
+
+    title.title =
+        item.title;
 
     const meta =
-        document.createElement('div');
+        document.createElement(
+            'div'
+        );
 
-    meta.className = 'meta';
-
-    const metaParts = [
-        typeLabel(item.type),
-        item.year
-            ? String(item.year)
-            : '',
-        item.provider
-            ? item.provider
-            : ''
-    ].filter(Boolean);
+    meta.className =
+        'card-meta';
 
     meta.textContent =
-        metaParts.join(' • ');
+        [
+            item.provider,
+            item.year
+                ? String(item.year)
+                : ''
+        ]
+            .filter(Boolean)
+            .join(' • ');
 
     const actions =
-        document.createElement('div');
+        document.createElement(
+            'div'
+        );
 
     actions.className =
         'card-actions';
 
-    const watch =
-        document.createElement('button');
+    const play =
+        document.createElement(
+            'button'
+        );
 
-    watch.type = 'button';
-    watch.className =
+    play.type =
+        'button';
+
+    play.className =
         'btn btn-primary';
 
-    const savedProgress =
-        getProgress(item);
-
-    watch.textContent =
-        savedProgress > 0
+    play.textContent =
+        getProgress(item) > 0
             ? 'Resume'
             : 'Play';
 
-    watch.addEventListener(
+    play.addEventListener(
         'click',
-        () => openPlayer(item)
+        () => {
+            openPlayer(item);
+        }
     );
 
     const favorite =
-        document.createElement('button');
+        document.createElement(
+            'button'
+        );
 
-    favorite.type = 'button';
+    favorite.type =
+        'button';
+
     favorite.className =
-        'favorite';
+        'favorite-btn';
 
     favorite.setAttribute(
         'aria-label',
         'Toggle favorite'
     );
 
-    function updateFavoriteButton() {
+    function refreshFavorite() {
         const active =
             isFavorite(item);
 
@@ -1720,7 +2502,7 @@ function createCard(item) {
                 : '☆';
     }
 
-    updateFavoriteButton();
+    refreshFavorite();
 
     favorite.addEventListener(
         'click',
@@ -1728,7 +2510,9 @@ function createCard(item) {
             const active =
                 toggleFavorite(item);
 
-            updateFavoriteButton();
+            refreshFavorite();
+
+            renderFavorites();
 
             showToast(
                 active
@@ -1739,478 +2523,285 @@ function createCard(item) {
         }
     );
 
-    actions.appendChild(watch);
-    actions.appendChild(favorite);
+    actions.appendChild(
+        play
+    );
 
-    body.appendChild(title);
-    body.appendChild(meta);
-    body.appendChild(actions);
+    actions.appendChild(
+        favorite
+    );
 
-    card.appendChild(poster);
-    card.appendChild(body);
+    body.appendChild(
+        title
+    );
+
+    body.appendChild(
+        meta
+    );
+
+    body.appendChild(
+        actions
+    );
+
+    card.appendChild(
+        poster
+    );
+
+    card.appendChild(
+        body
+    );
 
     card.addEventListener(
         'dblclick',
-        () => openDetails(item)
+        () => {
+            openDetails(item);
+        }
     );
 
     return card;
 }
 
-function renderResults(items) {
-    elements.results.replaceChildren();
+/* ============================================================
+   CONTINUE WATCHING
+============================================================ */
 
-    const normalized =
-        items
-            .map(normalizeItem)
-            .filter(Boolean);
-
-    state.results =
-        normalized;
-
-    populateProviders(
-        normalized
-    );
-
-    const type =
-        elements.typeSelect.value;
-
-    const provider =
-        elements.providerSelect.value;
-
-    const filtered =
-        normalized.filter(item => {
-            if (
-                type !== 'all' &&
-                normalizeType(item.type) !==
-                    normalizeType(type)
-            ) {
-                return false;
-            }
-
-            if (
-                provider !== 'all' &&
-                item.provider !== provider
-            ) {
-                return false;
-            }
-
-            return true;
-        });
-
-    filtered.forEach(item => {
-        elements.results.appendChild(
-            createCard(item)
-        );
-    });
-
-    elements.countText = null;
-
-    const count =
-        filtered.length;
-
-    if (count === 0) {
-        elements.empty.classList.remove(
-            'hidden'
-        );
-    } else {
-        elements.empty.classList.add(
-            'hidden'
-        );
-    }
-
-    return filtered;
-}
-
-/* ---------------------------------------------------------
-   Search/library
---------------------------------------------------------- */
-
-function currentFilters() {
-    return {
-        type:
-            elements.typeSelect.value,
-        provider:
-            elements.providerSelect.value
-    };
-}
-
-async function loadLibrary() {
-    if (state.searchController) {
-        state.searchController.abort();
-    }
-
-    const controller =
-        new AbortController();
-
-    state.libraryController =
-        controller;
-
-    state.lastMode = 'library';
-
-    setLoading(true);
-
-    setStatus(
-        'Loading library',
-        'Fetching the current catalog...'
-    );
-
-    try {
-        const filters =
-            currentFilters();
-
-        const params = {};
-
-        if (
-            filters.type !== 'all'
-        ) {
-            params.category =
-                filters.type;
-        }
-
-        const data =
-            await request(
-                apiUrl(
-                    '/api/library',
-                    params
-                ),
-                {
-                    signal:
-                        controller.signal
-                }
+function renderContinue() {
+    const items =
+        state.allItems
+            .filter(
+                item =>
+                    getProgress(item) > 0
+            )
+            .sort(
+                (a, b) =>
+                    getProgress(b) -
+                    getProgress(a)
+            )
+            .slice(
+                0,
+                10
             );
 
-        const items =
-            Array.isArray(data?.library)
-                ? data.library
-                : Array.isArray(data)
-                    ? data
-                    : [];
+    el.continueGrid.replaceChildren();
 
-        const normalized =
-            items
-                .map(normalizeItem)
-                .filter(Boolean);
-
-        state.results =
-            normalized;
-
-        populateProviders(
-            normalized
-        );
-
-        renderResults(
-            normalized
-        );
-
-        const count =
-            renderResults(
-                normalized
-            ).length;
-
-        setStatus(
-            count === 1
-                ? '1 title'
-                : `${count} titles`,
-            'Library'
-        );
-
-        elements.emptyText.textContent =
-            'The library has no matching titles yet.';
-    } catch (error) {
-        if (
-            error.name ===
-            'AbortError'
-        ) {
-            return;
-        }
-
-        console.error(error);
-
-        elements.results.replaceChildren();
-
-        elements.empty.classList.remove(
-            'hidden'
-        );
-
-        elements.emptyText.textContent =
-            error.message;
-
-        setStatus(
-            'Library unavailable',
-            'Check the server and try again.'
-        );
-
-        showToast(
-            error.message,
-            'error'
-        );
-    } finally {
-        setLoading(false);
-    }
-}
-
-async function searchEverything(query) {
-    const q =
-        String(query || '')
-            .trim();
-
-    if (!q) {
-        return loadLibrary();
-    }
-
-    if (state.searchController) {
-        state.searchController.abort();
-    }
-
-    const controller =
-        new AbortController();
-
-    state.searchController =
-        controller;
-
-    state.lastMode = 'search';
-    state.lastQuery = q;
-
-    setLoading(true);
-
-    setStatus(
-        `Searching for "${q}"`,
-        'Searching available providers...'
-    );
-
-    try {
-        const data =
-            await request(
-                apiUrl(
-                    '/api/search',
-                    {
-                        q,
-                        query: q
-                    }
-                ),
-                {
-                    signal:
-                        controller.signal
-                }
-            );
-
-        const raw =
-            Array.isArray(data?.results)
-                ? data.results
-                : Array.isArray(data?.library)
-                    ? data.library
-                    : Array.isArray(data)
-                        ? data
-                        : [];
-
-        const items =
-            raw
-                .map(normalizeItem)
-                .filter(Boolean);
-
-        state.results =
-            items;
-
-        populateProviders(
-            items
-        );
-
-        const filtered =
-            renderResults(
-                items
-            );
-
-        setStatus(
-            filtered.length === 1
-                ? '1 result'
-                : `${filtered.length} results`,
-            `Search: ${q}`
-        );
-
-        elements.emptyText.textContent =
-            `No results were found for "${q}".`;
-
-    } catch (error) {
-        if (
-            error.name ===
-            'AbortError'
-        ) {
-            return;
-        }
-
-        console.error(error);
-
-        elements.results.replaceChildren();
-
-        elements.empty.classList.remove(
-            'hidden'
-        );
-
-        elements.emptyText.textContent =
-            error.message;
-
-        setStatus(
-            'Search failed',
-            'Try again in a moment.'
-        );
-
-        showToast(
-            error.message,
-            'error'
-        );
-    } finally {
-        setLoading(false);
-    }
-}
-
-function scheduleSearch() {
-    clearTimeout(
-        state.searchTimer
-    );
-
-    state.searchTimer =
-        setTimeout(
-            () => {
-                const query =
-                    elements.searchInput.value;
-
-                searchEverything(query);
-            },
-            350
-        );
-}
-
-function applyFilters() {
     if (
-        elements.searchInput.value.trim()
+        items.length === 0
     ) {
-        searchEverything(
-            elements.searchInput.value
+        el.continueSection.classList.add(
+            'hidden'
         );
-    } else {
-        loadLibrary();
+
+        return;
     }
+
+    el.continueSection.classList.remove(
+        'hidden'
+    );
+
+    items.forEach(
+        item =>
+            el.continueGrid.appendChild(
+                createCard(item)
+            )
+    );
 }
 
-/* ---------------------------------------------------------
-   Details
---------------------------------------------------------- */
+/* ============================================================
+   FAVORITES
+============================================================ */
 
-async function openDetails(item) {
-    if (!item) return;
+function renderFavorites() {
+    if (
+        state.mode ===
+        'search'
+    ) {
+        return;
+    }
 
-    elements.detailOverlay.classList.add(
+    const items =
+        state.allItems.filter(
+            item =>
+                isFavorite(item)
+        );
+
+    el.favoritesGrid.replaceChildren();
+
+    if (
+        items.length === 0
+    ) {
+        el.favoritesSection.classList.add(
+            'hidden'
+        );
+
+        return;
+    }
+
+    el.favoritesSection.classList.remove(
+        'hidden'
+    );
+
+    items
+        .slice(
+            0,
+            10
+        )
+        .forEach(
+            item =>
+                el.favoritesGrid.appendChild(
+                    createCard(item)
+                )
+        );
+}
+
+/* ============================================================
+   DETAILS
+============================================================ */
+
+async function openDetails(
+    item
+) {
+    if (!item) {
+        return;
+    }
+
+    el.detailOverlay.classList.add(
         'open'
     );
 
-    elements.detailModalTitle.textContent =
+    el.detailTitle.textContent =
         item.title;
 
-    elements.detailContent.innerHTML =
-        '<div class="loading"><div class="spinner"></div></div>';
+    el.detailContent.innerHTML =
+        `
+            <div class="loader">
+                <div class="spinner"></div>
+            </div>
+        `;
 
     try {
-        let data;
+        const response =
+            await fetch(
+                `/api/title/${encodeURIComponent(item.id)}`
+            );
 
-        if (item.id) {
-            data =
-                await request(
-                    `/api/title/${encodeURIComponent(item.id)}`
-                );
+        const data =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data?.error ||
+                'Unable to load title.'
+            );
         }
 
-        const detail =
+        const detailed =
             normalizeItem(
-                data?.title ??
-                data ??
+                data?.item ||
+                data?.title ||
+                data ||
                 item
             );
 
         renderDetails(
-            detail || item
+            detailed ||
+            item
         );
 
     } catch (error) {
-        console.error(error);
+        console.warn(
+            'Detail request failed:',
+            error
+        );
 
-        renderDetails(item);
-
-        showToast(
-            'Showing available details only.',
-            'error'
+        renderDetails(
+            item
         );
     }
 }
 
-function renderDetails(item) {
+function renderDetails(
+    item
+) {
     const poster =
         item.poster
-            ? `<img class="detail-poster" src="${escapeHtml(item.poster)}" alt="${escapeHtml(item.title)}">`
-            : `<div class="detail-placeholder">${escapeHtml(item.title)}</div>`;
+            ? `
+                <img
+                    class="detail-poster"
+                    src="${escapeHtml(item.poster)}"
+                    alt="${escapeHtml(item.title)}"
+                    referrerpolicy="no-referrer"
+                >
+            `
+            : `
+                <div class="detail-placeholder">
+                    ${escapeHtml(item.title)}
+                </div>
+            `;
 
     const chips = [
         typeLabel(item.type),
         item.provider,
         item.year
             ? String(item.year)
-            : '',
-        formatDuration(
-            item.duration
-        )
+            : ''
     ].filter(Boolean);
 
-    const description =
-        item.description ||
-        'No description is available.';
+    el.detailContent.innerHTML =
+        `
+            ${poster}
 
-    elements.detailContent.innerHTML = `
-        ${poster}
+            <div>
 
-        <div class="detail-info">
+                <h1 class="detail-title">
+                    ${escapeHtml(item.title)}
+                </h1>
 
-            <h1 class="detail-title">
-                ${escapeHtml(item.title)}
-            </h1>
+                <div class="detail-meta">
+                    ${chips.map(
+                        chip =>
+                            `<span class="detail-chip">${escapeHtml(chip)}</span>`
+                    ).join('')}
+                </div>
 
-            <div class="detail-meta">
-                ${chips.map(chip =>
-                    `<span class="detail-chip">${escapeHtml(chip)}</span>`
-                ).join('')}
+                <div class="detail-description">
+                    ${escapeHtml(
+                        item.description ||
+                        'No description available.'
+                    )}
+                </div>
+
+                <div class="detail-buttons">
+
+                    <button
+                        id="detailPlay"
+                        class="btn btn-primary"
+                        type="button"
+                    >
+                        ${getProgress(item) > 0
+                            ? 'Resume'
+                            : 'Play'}
+                    </button>
+
+                    <button
+                        id="detailFavorite"
+                        class="btn"
+                        type="button"
+                    >
+                        ${isFavorite(item)
+                            ? '★ Remove favorite'
+                            : '☆ Add favorite'}
+                    </button>
+
+                </div>
+
             </div>
+        `;
 
-            <div class="detail-description">
-                ${escapeHtml(description)}
-            </div>
+    const play =
+        $('detailPlay');
 
-            <div class="detail-actions">
-
-                <button
-                    id="detailPlayButton"
-                    class="btn btn-primary"
-                    type="button"
-                >
-                    ${getProgress(item) > 0 ? 'Resume' : 'Play'}
-                </button>
-
-                <button
-                    id="detailFavoriteButton"
-                    class="favorite"
-                    type="button"
-                >
-                    ${isFavorite(item) ? '★ Remove favorite' : '☆ Add favorite'}
-                </button>
-
-            </div>
-
-        </div>
-    `;
-
-    const playButton =
-        $('detailPlayButton');
-
-    if (playButton) {
-        playButton.addEventListener(
+    if (play) {
+        play.addEventListener(
             'click',
             () => {
                 closeDetails();
@@ -2219,116 +2810,117 @@ function renderDetails(item) {
         );
     }
 
-    const favoriteButton =
-        $('detailFavoriteButton');
+    const favorite =
+        $('detailFavorite');
 
-    if (favoriteButton) {
-        favoriteButton.addEventListener(
+    if (favorite) {
+        favorite.addEventListener(
             'click',
             () => {
                 const active =
-                    toggleFavorite(item);
+                    toggleFavorite(
+                        item
+                    );
 
-                favoriteButton.textContent =
+                favorite.textContent =
                     active
                         ? '★ Remove favorite'
                         : '☆ Add favorite';
+
+                renderFavorites();
             }
         );
     }
 }
 
-/* ---------------------------------------------------------
-   Player
---------------------------------------------------------- */
+/* ============================================================
+   PLAYER
+============================================================ */
 
-function closePlayer() {
-    try {
-        elements.video.pause();
-    } catch {}
-
-    elements.video.removeAttribute(
-        'src'
-    );
-
-    elements.video.load();
-
-    elements.playerOverlay.classList.remove(
-        'open'
-    );
-
-    state.currentTitle = null;
-    state.currentSources = [];
-    state.currentSourceIndex = -1;
-
-    elements.sourceList.replaceChildren();
-}
-
-function sourceIsUsable(source) {
-    return Boolean(
-        source &&
-        typeof source.url === 'string' &&
-        source.url.trim()
-    );
-}
-
-function sourceLabel(source, index) {
-    const pieces = [
-        source.name,
-        source.quality
-            ? String(source.quality)
-            : '',
+function sourceText(
+    source,
+    index
+) {
+    return [
+        source.name ||
+            `Source ${index + 1}`,
+        source.quality,
         source.format
             ? source.format.toUpperCase()
             : ''
-    ].filter(Boolean);
-
-    return (
-        pieces.join(' • ') ||
-        `Source ${index + 1}`
-    );
+    ]
+        .filter(Boolean)
+        .join(' • ');
 }
 
-function getMimeType(source) {
+function sourceMime(
+    source
+) {
+    if (
+        source.mime
+    ) {
+        return source.mime;
+    }
+
     const format =
         String(
-            source?.format || ''
+            source.format ||
+            ''
         ).toLowerCase();
 
     if (
-        format === 'm3u8' ||
-        format === 'hls'
+        format === 'hls' ||
+        format === 'm3u8'
     ) {
         return 'application/x-mpegURL';
     }
 
-    if (format === 'mp4') {
-        return 'video/mp4';
-    }
-
-    if (format === 'webm') {
+    if (
+        format === 'webm'
+    ) {
         return 'video/webm';
     }
 
-    if (format === 'ogg' ||
-        format === 'ogv') {
+    if (
+        format === 'ogg' ||
+        format === 'ogv'
+    ) {
         return 'video/ogg';
+    }
+
+    if (
+        format === 'mp4'
+    ) {
+        return 'video/mp4';
     }
 
     return '';
 }
 
 function renderSources() {
-    elements.sourceList.replaceChildren();
+    el.sourceList.replaceChildren();
 
     state.currentSources.forEach(
-        (source, index) => {
+        (
+            source,
+            index
+        ) => {
             const button =
-                document.createElement('button');
+                document.createElement(
+                    'button'
+                );
 
-            button.type = 'button';
+            button.type =
+                'button';
+
             button.className =
                 'source-btn';
+
+            button.textContent =
+                sourceText(
+                    source,
+                    index
+                );
 
             if (
                 index ===
@@ -2339,61 +2931,98 @@ function renderSources() {
                 );
             }
 
-            button.textContent =
-                sourceLabel(
-                    source,
-                    index
-                );
-
             button.addEventListener(
                 'click',
                 () => {
-                    playSource(index);
+                    playSource(
+                        index
+                    );
                 }
             );
 
-            elements.sourceList.appendChild(
+            el.sourceList.appendChild(
                 button
             );
         }
     );
 }
 
-function attemptAutoplay() {
-    const video =
-        elements.video;
+function closePlayer() {
+    if (
+        state.currentTitle
+    ) {
+        saveProgress(
+            state.currentTitle,
+            el.video.currentTime
+        );
+    }
 
-    video.autoplay = true;
+    try {
+        el.video.pause();
+    } catch {}
 
+    el.video.removeAttribute(
+        'src'
+    );
+
+    while (
+        el.video.firstChild
+    ) {
+        el.video.removeChild(
+            el.video.firstChild
+        );
+    }
+
+    el.video.load();
+
+    el.playerOverlay.classList.remove(
+        'open'
+    );
+
+    state.currentTitle =
+        null;
+
+    state.currentSources =
+        [];
+
+    state.currentSourceIndex =
+        -1;
+
+    el.sourceList.replaceChildren();
+
+    renderContinue();
+}
+
+function attemptPlay() {
     const promise =
-        video.play();
+        el.video.play();
 
     if (
         promise &&
         typeof promise.catch ===
             'function'
     ) {
-        promise.catch(() => {
-            /*
-                Browser autoplay policies may
-                reject audible autoplay.
-
-                We do not fake success here.
-                The controls remain available
-                for the user to start playback.
-            */
-
-            elements.playerStatus.textContent =
-                'Ready — press play if your browser blocked autoplay.';
-        });
+        promise.catch(
+            () => {
+                el.playerState.textContent =
+                    'Ready — press play if autoplay was blocked by your browser.';
+            }
+        );
     }
 }
 
-function playSource(index) {
+function playSource(
+    index
+) {
     const source =
-        state.currentSources[index];
+        state.currentSources[
+            index
+        ];
 
-    if (!sourceIsUsable(source)) {
+    if (
+        !source ||
+        !source.url
+    ) {
         return;
     }
 
@@ -2402,138 +3031,155 @@ function playSource(index) {
 
     renderSources();
 
-    const video =
-        elements.video;
-
-    try {
-        video.pause();
-    } catch {}
-
-    video.removeAttribute(
-        'src'
-    );
-
-    while (
-        video.firstChild
-    ) {
-        video.removeChild(
-            video.firstChild
-        );
-    }
-
-    const mime =
-        getMimeType(source);
-
-    if (mime) {
-        const sourceElement =
-            document.createElement(
-                'source'
-            );
-
-        sourceElement.src =
-            source.url;
-
-        sourceElement.type =
-            mime;
-
-        video.appendChild(
-            sourceElement
-        );
-    } else {
-        video.src =
-            source.url;
-    }
-
-    video.load();
-
-    const progress =
+    const saved =
         getProgress(
             state.currentTitle
         );
 
-    const restorePosition =
+    try {
+        el.video.pause();
+    } catch {}
+
+    el.video.removeAttribute(
+        'src'
+    );
+
+    while (
+        el.video.firstChild
+    ) {
+        el.video.removeChild(
+            el.video.firstChild
+        );
+    }
+
+    const mime =
+        sourceMime(
+            source
+        );
+
+    if (mime) {
+        const node =
+            document.createElement(
+                'source'
+            );
+
+        node.src =
+            source.url;
+
+        node.type =
+            mime;
+
+        el.video.appendChild(
+            node
+        );
+
+    } else {
+        el.video.src =
+            source.url;
+    }
+
+    el.playerState.textContent =
+        `Loading ${sourceText(source, index)}...`;
+
+    el.video.load();
+
+    const restore =
         () => {
             if (
-                progress > 0 &&
+                saved > 0 &&
                 Number.isFinite(
-                    video.duration
+                    el.video.duration
                 ) &&
-                progress <
-                    video.duration - 5
+                saved <
+                    el.video.duration - 5
             ) {
                 try {
-                    video.currentTime =
-                        progress;
+                    el.video.currentTime =
+                        saved;
                 } catch {}
             }
 
-            video.removeEventListener(
+            el.video.removeEventListener(
                 'loadedmetadata',
-                restorePosition
+                restore
             );
         };
 
-    video.addEventListener(
+    el.video.addEventListener(
         'loadedmetadata',
-        restorePosition
+        restore
     );
 
-    elements.playerStatus.textContent =
-        `Loading ${sourceLabel(source, index)}...`;
-
-    video.addEventListener(
+    el.video.addEventListener(
         'canplay',
         () => {
-            elements.playerStatus.textContent =
-                `Playing ${sourceLabel(source, index)}`;
+            el.playerState.textContent =
+                `Playing ${sourceText(source, index)}`;
 
-            attemptAutoplay();
+            attemptPlay();
         },
         {
             once:true
         }
     );
 
-    video.addEventListener(
+    el.video.addEventListener(
         'error',
         () => {
-            elements.playerStatus.textContent =
-                'This source could not be played in the browser. Try another source.';
+            el.playerState.textContent =
+                'This source could not be played. Try another source.';
         },
         {
             once:true
         }
     );
 
-    attemptAutoplay();
+    attemptPlay();
 }
 
-async function openPlayer(item) {
-    if (!item) return;
+async function openPlayer(
+    item
+) {
+    if (!item) {
+        return;
+    }
 
     state.currentTitle =
-        normalizeItem(item);
+        item;
 
-    state.currentSources = [];
-    state.currentSourceIndex = -1;
+    state.currentSources =
+        [];
 
-    elements.playerOverlay.classList.add(
+    state.currentSourceIndex =
+        -1;
+
+    el.playerOverlay.classList.add(
         'open'
     );
 
-    elements.playerTitle.textContent =
+    el.playerTitle.textContent =
         item.title;
 
-    elements.playerStatus.textContent =
+    el.playerState.textContent =
         'Finding playable sources...';
 
-    elements.sourceList.replaceChildren();
+    el.sourceList.replaceChildren();
 
     try {
-        const data =
-            await request(
+        const response =
+            await fetch(
                 `/api/sources/${encodeURIComponent(item.id)}`
             );
+
+        const data =
+            await response.json();
+
+        if (!response.ok) {
+            throw new Error(
+                data?.error ||
+                'Unable to resolve sources.'
+            );
+        }
 
         const raw =
             Array.isArray(data?.sources)
@@ -2545,13 +3191,17 @@ async function openPlayer(item) {
         state.currentSources =
             raw
                 .map(normalizeSource)
-                .filter(sourceIsUsable);
+                .filter(
+                    source =>
+                        source &&
+                        source.url
+                );
 
         if (
             state.currentSources.length === 0
         ) {
-            elements.playerStatus.textContent =
-                'No playable sources were returned for this title.';
+            el.playerState.textContent =
+                'No playable sources were returned.';
 
             showToast(
                 'No playable source was found.',
@@ -2563,19 +3213,16 @@ async function openPlayer(item) {
 
         renderSources();
 
-        /*
-            Prefer the first source returned by
-            the backend. The backend decides its
-            source ordering.
-        */
-        playSource(0);
+        playSource(
+            0
+        );
 
     } catch (error) {
         console.error(error);
 
-        elements.playerStatus.textContent =
+        el.playerState.textContent =
             error.message ||
-            'Unable to find a playable source.';
+            'Unable to load sources.';
 
         showToast(
             error.message ||
@@ -2585,30 +3232,26 @@ async function openPlayer(item) {
     }
 }
 
-/* ---------------------------------------------------------
-   Player progress
---------------------------------------------------------- */
+/* ============================================================
+   PLAYER EVENTS
+============================================================ */
 
-elements.video.addEventListener(
+el.video.addEventListener(
     'timeupdate',
     () => {
-        if (!state.currentTitle) {
-            return;
-        }
-
         if (
-            elements.video.currentTime >
-            5
+            state.currentTitle &&
+            el.video.currentTime > 5
         ) {
             saveProgress(
                 state.currentTitle,
-                elements.video.currentTime
+                el.video.currentTime
             );
         }
     }
 );
 
-elements.video.addEventListener(
+el.video.addEventListener(
     'ended',
     () => {
         if (
@@ -2618,29 +3261,56 @@ elements.video.addEventListener(
                 state.currentTitle
             );
         }
+
+        renderContinue();
     }
 );
 
-/* ---------------------------------------------------------
-   Extensions
---------------------------------------------------------- */
+el.fullscreen.addEventListener(
+    'click',
+    async () => {
+        try {
+            if (
+                document.fullscreenElement
+            ) {
+                await document.exitFullscreen();
+            } else {
+                await el.video.requestFullscreen();
+            }
+        } catch {
+            try {
+                await el.video.webkitEnterFullscreen();
+            } catch {}
+        }
+    }
+);
+
+/* ============================================================
+   EXTENSIONS
+============================================================ */
 
 async function openExtensions() {
-    elements.extensionsOverlay.classList.add(
+    el.extensionsOverlay.classList.add(
         'open'
     );
 
-    elements.extensionList.innerHTML =
-        '<div class="loading"><div class="spinner"></div></div>';
+    el.extensionList.innerHTML =
+        `
+            <div class="loader">
+                <div class="spinner"></div>
+            </div>
+        `;
 
     try {
         const data =
-            await request(
+            await requestJson(
                 '/api/extensions'
             );
 
         const extensions =
-            Array.isArray(data?.extensions)
+            Array.isArray(
+                data?.extensions
+            )
                 ? data.extensions
                 : Array.isArray(data)
                     ? data
@@ -2653,154 +3323,265 @@ async function openExtensions() {
     } catch (error) {
         console.error(error);
 
-        elements.extensionList.innerHTML =
-            `<div class="empty">${escapeHtml(error.message)}</div>`;
+        /*
+          The six requested provider names are shown
+          as desired providers when the backend has not
+          yet supplied extension metadata.
+        */
+
+        const expected = [
+            'StreamPlay',
+            'MovieBox',
+            '4KHDHUB',
+            'AniDB',
+            'AnimePahe',
+            'Cinestream'
+        ];
+
+        renderExtensions(
+            expected.map(
+                name => ({
+                    name,
+                    status:
+                        'Not registered by backend',
+                    enabled:false
+                })
+            )
+        );
     }
 }
 
 function renderExtensions(
     extensions
 ) {
-    elements.extensionList.replaceChildren();
+    el.extensionList.replaceChildren();
 
     if (
         extensions.length === 0
     ) {
-        elements.extensionList.innerHTML =
-            '<div class="empty">No extensions have been discovered yet.</div>';
+        el.extensionList.innerHTML =
+            `
+                <div class="empty">
+                    <strong>No extensions discovered</strong>
+                    Add a CloudStream repository to the backend and synchronize.
+                </div>
+            `;
 
         return;
     }
 
-    extensions.forEach(extension => {
-        const row =
-            document.createElement('div');
+    extensions.forEach(
+        extension => {
+            const row =
+                document.createElement(
+                    'div'
+                );
 
-        row.className = 'extension';
+            row.className =
+                'extension';
 
-        const left =
-            document.createElement('div');
+            const left =
+                document.createElement(
+                    'div'
+                );
 
-        const name =
-            document.createElement('div');
+            const name =
+                document.createElement(
+                    'div'
+                );
 
-        name.className =
-            'extension-name';
+            name.className =
+                'extension-name';
 
-        name.textContent =
-            extension.name ||
-            extension.internalName ||
-            'Unnamed extension';
+            name.textContent =
+                extension.name ||
+                extension.internalName ||
+                'Unnamed extension';
 
-        const meta =
-            document.createElement('div');
+            const meta =
+                document.createElement(
+                    'div'
+                );
 
-        meta.className =
-            'extension-meta';
+            meta.className =
+                'extension-meta';
 
-        const metaParts = [
-            extension.version
-                ? `v${extension.version}`
-                : '',
-            extension.language
-                ? extension.language
-                : '',
-            extension.repositoryUrl
-                ? 'Repository'
-                : ''
-        ].filter(Boolean);
+            meta.textContent =
+                [
+                    extension.version
+                        ? `v${extension.version}`
+                        : '',
+                    extension.providerCount
+                        ? `${extension.providerCount} providers`
+                        : '',
+                    extension.repositoryName
+                        ? extension.repositoryName
+                        : ''
+                ]
+                    .filter(Boolean)
+                    .join(' • ') ||
+                'CloudStream extension';
 
-        meta.textContent =
-            metaParts.join(' • ');
-
-        left.appendChild(name);
-        left.appendChild(meta);
-
-        const status =
-            document.createElement('span');
-
-        const healthy =
-            extension.status ===
-                'ok' ||
-            extension.enabled === true ||
-            extension.status ===
-                'active';
-
-        status.className =
-            `extension-status ${healthy ? 'ok' : 'bad'}`;
-
-        status.textContent =
-            extension.status ||
-            (
-                extension.enabled
-                    ? 'Enabled'
-                    : 'Discovered'
+            left.appendChild(
+                name
             );
 
-        row.appendChild(left);
-        row.appendChild(status);
+            left.appendChild(
+                meta
+            );
 
-        elements.extensionList.appendChild(
-            row
-        );
-    });
-}
-
-/* ---------------------------------------------------------
-   Synchronization
---------------------------------------------------------- */
-
-async function syncEverything() {
-    if (state.syncInProgress) {
-        return;
-    }
-
-    state.syncInProgress = true;
-
-    elements.refreshButton.disabled =
-        true;
-
-    setStatus(
-        'Synchronizing',
-        'Updating extensions and rebuilding the library...'
-    );
-
-    try {
-        let data;
-
-        try {
-            data =
-                await request(
-                    '/api/sync',
-                    {
-                        method:'POST'
-                    }
+            const status =
+                document.createElement(
+                    'span'
                 );
-        } catch {
-            /*
-                Older/current server versions may
-                expose extension synchronization
-                separately.
-            */
-            await request(
-                '/api/extensions/sync',
-                {
-                    method:'POST'
-                }
+
+            const text =
+                String(
+                    extension.status ||
+                    (
+                        extension.enabled
+                            ? 'Enabled'
+                            : 'Discovered'
+                    )
+                );
+
+            const lower =
+                text.toLowerCase();
+
+            let cls =
+                'warning';
+
+            if (
+                lower.includes('online') ||
+                lower.includes('active') ||
+                lower.includes('enabled') ||
+                lower === 'ok'
+            ) {
+                cls =
+                    'ok';
+            }
+
+            if (
+                lower.includes('error') ||
+                lower.includes('failed') ||
+                lower.includes('offline')
+            ) {
+                cls =
+                    'bad';
+            }
+
+            status.className =
+                `extension-status ${cls}`;
+
+            status.textContent =
+                text;
+
+            row.appendChild(
+                left
+            );
+
+            row.appendChild(
+                status
+            );
+
+            el.extensionList.appendChild(
+                row
             );
         }
+    );
+}
 
-        const count =
-            data?.count ??
-            data?.library?.length ??
-            '';
+/* ============================================================
+   REQUEST HELPER
+============================================================ */
 
-        showToast(
-            count !== ''
-                ? `Synchronization complete — ${count} titles available.`
-                : 'Synchronization complete.',
-            'success'
+async function requestJson(
+    url,
+    options = {}
+) {
+    const response =
+        await fetch(
+            url,
+            {
+                ...options,
+                headers:{
+                    Accept:
+                        'application/json',
+                    ...(options.headers || {})
+                }
+            }
         );
+
+    const data =
+        await response.json();
+
+    if (!response.ok) {
+        throw new Error(
+            data?.error ||
+            `Request failed (${response.status})`
+        );
+    }
+
+    return data;
+}
+
+/* ============================================================
+   SYNCHRONIZATION
+============================================================ */
+
+async function synchronize() {
+    if (
+        el.refresh.disabled
+    ) {
+        return;
+    }
+
+    el.refresh.disabled =
+        true;
+
+    el.refresh.textContent =
+        '…';
+
+    try {
+        let completed =
+            false;
+
+        try {
+            await requestJson(
+                '/api/sync',
+                {
+                    method:
+                        'POST'
+                }
+            );
+
+            completed =
+                true;
+
+        } catch {
+            /*
+                Compatibility with a backend exposing
+                only /api/extensions/sync.
+            */
+
+            await requestJson(
+                '/api/extensions/sync',
+                {
+                    method:
+                        'POST'
+                }
+            );
+
+            completed =
+                true;
+        }
+
+        if (completed) {
+            showToast(
+                'Synchronization complete.',
+                'success'
+            );
+        }
 
     } catch (error) {
         console.error(error);
@@ -2811,17 +3592,17 @@ async function syncEverything() {
             'error'
         );
     } finally {
-        state.syncInProgress =
+        el.refresh.disabled =
             false;
 
-        elements.refreshButton.disabled =
-            false;
+        el.refresh.textContent =
+            '↻';
 
         if (
-            elements.searchInput.value.trim()
+            el.search.value.trim()
         ) {
-            await searchEverything(
-                elements.searchInput.value
+            await performSearch(
+                el.search.value
             );
         } else {
             await loadLibrary();
@@ -2829,124 +3610,112 @@ async function syncEverything() {
     }
 }
 
-/* ---------------------------------------------------------
-   Health
---------------------------------------------------------- */
+/* ============================================================
+   FILTERS
+============================================================ */
 
-async function loadHealth() {
-    try {
-        const data =
-            await request(
-                '/api/health'
-            );
+function setTypeFilter(
+    type
+) {
+    state.selectedType =
+        type;
 
-        const parts = [];
-
-        if (
-            Number.isFinite(
-                Number(data?.libraryCount)
-            )
-        ) {
-            parts.push(
-                `${data.libraryCount} titles`
+    el.filters.forEach(
+        filter => {
+            filter.classList.toggle(
+                'active',
+                filter.dataset.type ===
+                    type
             );
         }
+    );
 
-        if (
-            Number.isFinite(
-                Number(data?.extensionCount)
-            )
-        ) {
-            parts.push(
-                `${data.extensionCount} extensions`
-            );
-        }
-
-        if (
-            data?.status
-        ) {
-            parts.push(
-                String(data.status)
-            );
-        }
-
-        if (parts.length) {
-            elements.statusSub.textContent =
-                parts.join(' • ');
-        }
-
-    } catch (error) {
-        console.warn(
-            'Health check failed:',
-            error
-        );
-    }
+    applyCurrentView();
 }
 
-/* ---------------------------------------------------------
-   Modal handling
---------------------------------------------------------- */
+function applyCurrentView() {
+    if (
+        state.mode ===
+        'search' &&
+        state.query
+    ) {
+        renderMain(
+            state.currentItems
+        );
+
+        return;
+    }
+
+    renderMain(
+        state.allItems
+    );
+}
+
+/* ============================================================
+   CLOSE MODALS
+============================================================ */
 
 function closeDetails() {
-    elements.detailOverlay.classList.remove(
+    el.detailOverlay.classList.remove(
         'open'
     );
 }
 
 function closeExtensions() {
-    elements.extensionsOverlay.classList.remove(
+    el.extensionsOverlay.classList.remove(
         'open'
     );
 }
 
-function closeAllModals() {
+function closeAll() {
     closePlayer();
     closeDetails();
     closeExtensions();
 }
 
-function overlayClickToClose(
-    overlay,
-    closeFunction
-) {
-    overlay.addEventListener(
-        'click',
-        event => {
-            if (
-                event.target ===
-                overlay
-            ) {
-                closeFunction();
-            }
-        }
-    );
-}
+/* ============================================================
+   EVENTS
+============================================================ */
 
-/* ---------------------------------------------------------
-   Events
---------------------------------------------------------- */
-
-elements.searchInput.addEventListener(
+el.search.addEventListener(
     'input',
     () => {
-        const hasValue =
-            elements.searchInput.value.length >
-            0;
+        const value =
+            el.search.value;
 
-        elements.searchClear.classList.toggle(
+        el.searchClear.classList.toggle(
             'hidden',
-            !hasValue
+            !value
         );
 
-        scheduleSearch();
+        clearTimeout(
+            state.searchTimer
+        );
+
+        state.searchTimer =
+            setTimeout(
+                () => {
+                    if (
+                        value.trim()
+                    ) {
+                        performSearch(
+                            value
+                        );
+                    } else {
+                        loadLibrary();
+                    }
+                },
+                300
+            );
     }
 );
 
-elements.searchInput.addEventListener(
+el.search.addEventListener(
     'keydown',
     event => {
         if (
-            event.key === 'Enter'
+            event.key ===
+            'Enter'
         ) {
             event.preventDefault();
 
@@ -2954,18 +3723,19 @@ elements.searchInput.addEventListener(
                 state.searchTimer
             );
 
-            searchEverything(
-                elements.searchInput.value
+            performSearch(
+                el.search.value
             );
         }
 
         if (
-            event.key === 'Escape'
+            event.key ===
+            'Escape'
         ) {
-            elements.searchInput.value =
+            el.search.value =
                 '';
 
-            elements.searchClear.classList.add(
+            el.searchClear.classList.add(
                 'hidden'
             );
 
@@ -2974,137 +3744,160 @@ elements.searchInput.addEventListener(
     }
 );
 
-elements.searchClear.addEventListener(
+el.searchClear.addEventListener(
     'click',
     () => {
-        elements.searchInput.value =
+        el.search.value =
             '';
 
-        elements.searchClear.classList.add(
+        el.searchClear.classList.add(
             'hidden'
         );
 
         loadLibrary();
 
-        elements.searchInput.focus();
+        el.search.focus();
     }
 );
 
-elements.typeSelect.addEventListener(
-    'change',
-    applyFilters
-);
-
-elements.providerSelect.addEventListener(
-    'change',
-    () => {
-        const filtered =
-            renderResults(
-                state.results
-            );
-
-        setStatus(
-            filtered.length === 1
-                ? '1 result'
-                : `${filtered.length} results`,
-            state.lastMode === 'search'
-                ? `Search: ${state.lastQuery}`
-                : 'Library'
+el.filters.forEach(
+    filter => {
+        filter.addEventListener(
+            'click',
+            () => {
+                setTypeFilter(
+                    filter.dataset.type
+                );
+            }
         );
     }
 );
 
-elements.refreshButton.addEventListener(
+el.refresh.addEventListener(
     'click',
-    syncEverything
+    synchronize
 );
 
-elements.extensionsButton.addEventListener(
+el.extensions.addEventListener(
     'click',
     openExtensions
 );
 
-elements.closePlayer.addEventListener(
+el.heroExtensions.addEventListener(
+    'click',
+    openExtensions
+);
+
+el.heroSearch.addEventListener(
+    'click',
+    () => {
+        el.search.focus();
+    }
+);
+
+el.clearFavorites.addEventListener(
+    'click',
+    () => {
+        for (
+            const id
+            of [...state.favorites]
+        ) {
+            localStorage.removeItem(
+                favoriteKey(id)
+            );
+        }
+
+        state.favorites.clear();
+
+        renderFavorites();
+
+        showToast(
+            'Favorites cleared.',
+            'success'
+        );
+    }
+);
+
+el.closePlayer.addEventListener(
     'click',
     closePlayer
 );
 
-elements.closeDetail.addEventListener(
+el.closeDetail.addEventListener(
     'click',
     closeDetails
 );
 
-elements.closeExtensions.addEventListener(
+el.closeExtensions.addEventListener(
     'click',
     closeExtensions
 );
 
-overlayClickToClose(
-    elements.playerOverlay,
-    closePlayer
-);
-
-overlayClickToClose(
-    elements.detailOverlay,
-    closeDetails
-);
-
-overlayClickToClose(
-    elements.extensionsOverlay,
-    closeExtensions
+[
+    [
+        el.playerOverlay,
+        closePlayer
+    ],
+    [
+        el.detailOverlay,
+        closeDetails
+    ],
+    [
+        el.extensionsOverlay,
+        closeExtensions
+    ]
+].forEach(
+    ([overlay, close]) => {
+        overlay.addEventListener(
+            'click',
+            event => {
+                if (
+                    event.target ===
+                    overlay
+                ) {
+                    close();
+                }
+            }
+        );
+    }
 );
 
 document.addEventListener(
     'keydown',
     event => {
         if (
-            event.key !== 'Escape'
+            event.key !==
+            'Escape'
         ) {
             return;
         }
 
-        if (
-            elements.playerOverlay.classList.contains(
-                'open'
-            )
-        ) {
-            closePlayer();
-            return;
-        }
-
-        if (
-            elements.detailOverlay.classList.contains(
-                'open'
-            )
-        ) {
-            closeDetails();
-            return;
-        }
-
-        if (
-            elements.extensionsOverlay.classList.contains(
-                'open'
-            )
-        ) {
-            closeExtensions();
-        }
+        closeAll();
     }
 );
 
-/* ---------------------------------------------------------
-   Startup
---------------------------------------------------------- */
+/* ============================================================
+   INIT
+============================================================ */
 
 async function initialize() {
-    setStatus(
-        'Mediav2',
-        'Starting...'
-    );
+    loadLocalState();
 
-    await Promise.allSettled([
-        loadHealth(),
-        loadLibrary()
-    ]);
+    await loadLibrary();
+
+    /*
+        Load extension metadata independently so an
+        extension failure does not prevent the library
+        from appearing.
+    */
+
+    try {
+        await requestJson(
+            '/api/extensions'
+        );
+    } catch {
+        // Extension metadata is optional for startup.
+    }
 }
 
 initialize();
