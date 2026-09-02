@@ -7,16 +7,30 @@ plugins {
 cloudstream {
     setManifest {
         name = "Cinestream"
-        description = "Stream movies and series"
-        authors = listOf("CustomRepo")
+
+        description =
+            "Mediav2 CloudStream provider adapter"
+
+        authors =
+            listOf("star884")
+
         version = 1
-        requiresTypes = listOf("Movie", "TvSeries")
-        iconUrl = "https://raw.githubusercontent.com/recloudstream/cloudstream/master/app/src/main/res/drawable/ic_launcher_foreground.png"
+
+        requiresTypes =
+            listOf(
+                "Movie",
+                "TvSeries"
+            )
+
+        iconUrl =
+            "https://raw.githubusercontent.com/recloudstream/cloudstream/master/app/src/main/res/drawable/ic_launcher_foreground.png"
     }
 }
 
 android {
-    namespace = "com.example.cinestream"
+    namespace =
+        "com.example.cinestream"
+
     compileSdk = 34
 
     defaultConfig {
