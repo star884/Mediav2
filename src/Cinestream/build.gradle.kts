@@ -7,7 +7,7 @@ plugins {
 cloudstream {
     setManifest {
         name = "Cinestream"
-        description = "Streams movies and series from Cinestream source"
+        description = "Stream movies and series"
         authors = listOf("CustomRepo")
         version = 1
         requiresTypes = listOf("Movie", "TvSeries")
@@ -18,7 +18,7 @@ cloudstream {
 android {
     namespace = "com.example.cinestream"
     compileSdk = 34
-    
+
     defaultConfig {
         minSdk = 21
     }
