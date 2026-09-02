@@ -1,255 +1,80 @@
-name: Build Mediav2 Extensions
+name: Build Mediav2 CloudStream Runtime
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-  workflow_dispatch:
 
 permissions:
   contents: write
 
-env:
-  STREAMPLAY_ARTIFACT_URL: https://raw.githubusercontent.com/tpadev/phiser-streamplay/builds/StreamPlay.cs3
-  STREAMPLAY_MANIFEST_URL: https://raw.githubusercontent.com/tpadev/phiser-streamplay/builds/plugins.json
-
 jobs:
-  build:
+  build-runtime:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Mediav2
         uses: actions/checkout@v4
+
+      - name: Checkout JVM CloudStream runtime
+        uses: actions/checkout@v4
         with:
+          repository: DHR-Store/CS-3
+          path: runtime-host
           fetch-depth: 1
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
-          node-version: "22"
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
 
-      - name: Inspect repository
+      - name: Copy Mediav2 runtime
+        shell: bash
         run: |
-          echo "Repository:"
-          pwd
-          echo
-          echo "Files:"
-          find . -maxdepth 2 -type f \
-            ! -path './.git/*' \
-            | sort
+          mkdir -p runtime-host/mediav2-runtime/src/main/kotlin/com/star884/mediav2/runtime
 
-      - name: Install dependencies
+          cp runtime/BridgeServer.kt \
+            runtime-host/mediav2-runtime/src/main/kotlin/com/star884/mediav2/runtime/BridgeServer.kt
+
+          cp runtime/build.gradle.kts \
+            runtime-host/mediav2-runtime/build.gradle.kts
+
+      - name: Register runtime module
+        shell: bash
+        working-directory: runtime-host
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          elif [ -f package.json ]; then
-            npm install
-          else
-            echo "No package.json found."
+          if ! grep -q 'include(":mediav2-runtime")' settings.gradle.kts; then
+            printf '\ninclude(":mediav2-runtime")\n' >> settings.gradle.kts
           fi
 
-      - name: Download official StreamPlay
+      - name: Build runtime
+        working-directory: runtime-host
         run: |
-          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :mediav2-runtime:jar \
+            --no-daemon \
+            --stacktrace
 
-          mkdir -p build
-
-          curl \
-            --fail \
-            --location \
-            --retry 5 \
-            --retry-delay 2 \
-            --connect-timeout 20 \
-            --max-time 300 \
-            -o build/StreamPlay.cs3 \
-            "$STREAMPLAY_ARTIFACT_URL"
-
-          test -s build/StreamPlay.cs3
-
-          echo "Downloaded StreamPlay:"
-          ls -lh build/StreamPlay.cs3
-
-      - name: Download StreamPlay manifest
+      - name: Prepare artifact
+        shell: bash
         run: |
-          set -euo pipefail
+          rm -rf build/runtime
+          mkdir -p build/runtime
 
-          curl \
-            --fail \
-            --location \
-            --retry 5 \
-            --retry-delay 2 \
-            --connect-timeout 20 \
-            --max-time 120 \
-            -o /tmp/streamplay-plugins.json \
-            "$STREAMPLAY_MANIFEST_URL"
+          cp runtime-host/mediav2-runtime/build/libs/*.jar \
+            build/runtime/mediav2-runtime.jar
 
-          test -s /tmp/streamplay-plugins.json
+          ls -lh build/runtime
 
-      - name: Create extension repository
-        run: |
-          set -euo pipefail
-
-          node <<'NODE'
-          const fs = require("fs");
-          const crypto = require("crypto");
-
-          fs.mkdirSync("build", { recursive: true });
-
-          const artifactPath = "build/StreamPlay.cs3";
-          const upstreamPath = "/tmp/streamplay-plugins.json";
-
-          if (!fs.existsSync(artifactPath)) {
-            throw new Error("StreamPlay.cs3 was not downloaded");
-          }
-
-          const upstream = JSON.parse(
-            fs.readFileSync(upstreamPath, "utf8")
-          );
-
-          if (!Array.isArray(upstream)) {
-            throw new Error("Upstream plugins.json is not an array");
-          }
-
-          const streamPlay = upstream.find(plugin => {
-            const internalName =
-              String(plugin?.internalName || "").toLowerCase();
-
-            const name =
-              String(plugin?.name || "").toLowerCase();
-
-            return (
-              internalName === "streamplay" ||
-              name === "streamplay"
-            );
-          });
-
-          if (!streamPlay) {
-            throw new Error(
-              "StreamPlay was not found in upstream plugins.json"
-            );
-          }
-
-          const repository =
-            process.env.GITHUB_REPOSITORY;
-
-          const file =
-            fs.readFileSync(artifactPath);
-
-          const stat =
-            fs.statSync(artifactPath);
-
-          const hash =
-            crypto
-              .createHash("sha256")
-              .update(file)
-              .digest("hex");
-
-          const plugin = {
-            ...streamPlay,
-
-            name: streamPlay.name || "StreamPlay",
-            internalName: streamPlay.internalName || "StreamPlay",
-
-            url:
-              `https://raw.githubusercontent.com/${repository}/builds/StreamPlay.cs3`,
-
-            fileSize: stat.size,
-            fileHash: hash
-          };
-
-          fs.writeFileSync(
-            "build/plugins.json",
-            JSON.stringify([plugin], null, 2) + "\n"
-          );
-
-          console.log(
-            JSON.stringify(plugin, null, 2)
-          );
-          NODE
-
-      - name: Create repo manifest
-        run: |
-          cat > build/repo.json <<'EOF'
-          {
-            "name": "Mediav2 Extensions",
-            "description": "CloudStream extensions for Mediav2",
-            "manifestVersion": 1,
-            "pluginLists": [
-              "https://raw.githubusercontent.com/star884/Mediav2/builds/plugins.json"
-            ]
-          }
-          EOF
-
-      - name: Validate build
-        run: |
-          set -euo pipefail
-
-          test -s build/StreamPlay.cs3
-          test -s build/plugins.json
-          test -s build/repo.json
-
-          node <<'NODE'
-          const fs = require("fs");
-
-          const plugins =
-            JSON.parse(
-              fs.readFileSync("build/plugins.json", "utf8")
-            );
-
-          if (!Array.isArray(plugins)) {
-            throw new Error("plugins.json is not an array");
-          }
-
-          const streamPlay =
-            plugins.find(
-              p =>
-                String(
-                  p.internalName || ""
-                ).toLowerCase() === "streamplay"
-            );
-
-          if (!streamPlay) {
-            throw new Error(
-              "StreamPlay missing from plugins.json"
-            );
-          }
-
-          if (
-            streamPlay.url !==
-            "https://raw.githubusercontent.com/star884/Mediav2/builds/StreamPlay.cs3"
-          ) {
-            throw new Error(
-              "StreamPlay URL is incorrect"
-            );
-          }
-
-          if (!streamPlay.fileSize) {
-            throw new Error(
-              "StreamPlay fileSize missing"
-            );
-          }
-
-          if (
-            !/^[a-f0-9]{64}$/i.test(
-              String(streamPlay.fileHash || "")
-            )
-          ) {
-            throw new Error(
-              "StreamPlay SHA-256 hash is invalid"
-            );
-          }
-
-          console.log("Mediav2 extension repository: OK");
-          NODE
-
-          echo
-          echo "Final build:"
-          find build -type f -printf '%p - %s bytes\n' | sort
-
-      - name: Publish builds branch
+      - name: Publish runtime
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./build
           publish_branch: builds
-          force_orphan: true
+          publish_dir: ./build
+          keep_files: true
+          force_orphan: false
+          commit_message: "Build Mediav2 CloudStream JVM runtime"
