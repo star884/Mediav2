@@ -3,64 +3,99 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web Video Player</title>
+    <title>CloudStream Web Library</title>
     <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet" />
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
-        h1 { color: #58a6ff; }
-        .controls { margin-bottom: 20px; display: flex; gap: 10px; flex-wrap: wrap; }
-        select, input, button { padding: 10px; background: #161b22; border: 1px solid #30363d; color: #fff; border-radius: 6px; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; }
+        .controls { display: flex; gap: 10px; margin: 20px 0; }
+        input, select, button { padding: 10px; background: #161b22; border: 1px solid #30363d; color: white; border-radius: 6px; }
         button { background: #238636; border: none; cursor: pointer; font-weight: bold; }
-        button:hover { background: #2ea043; }
-        .player-container { margin-top: 20px; display: flex; justify-content: center; }
-        .video-js { width: 100%; max-width: 960px; height: 540px; border-radius: 8px; overflow: hidden; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px; text-align: center; }
+        .card img { width: 100%; height: 260px; object-fit: cover; border-radius: 4px; }
+        .badge { display: inline-block; background: #1f6feb; padding: 3px 8px; font-size: 0.75rem; border-radius: 12px; margin-top: 5px; }
+        .player-modal { display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.9); justify-content: center; align-items: center; }
+        .player-content { width: 90%; max-width: 900px; }
+        .close-btn { background: #da3633; float: right; margin-bottom: 10px; }
     </style>
 </head>
 <body>
-    <h1>Stream Directory</h1>
-    
-    <div class="controls">
-        <select id="providerSelect">
-            <option value="StreamPlay">StreamPlay</option>
-            <option value="Moviebox">Moviebox</option>
-            <option value="4KHDHUB">4KHDHUB</option>
-            <option value="AniDb">AniDb</option>
-            <option value="Animepahe">Animepahe</option>
-            <option value="Cinestream">Cinestream</option>
-        </select>
-        <input type="text" id="targetUrl" placeholder="Enter video/page URL..." style="width: 350px;">
-        <button onclick="loadStream()">Load Video</button>
+
+    <div class="header">
+        <h1>Auto-Aggregated Library</h1>
+        <span id="itemCount">Loading catalog...</span>
     </div>
 
-    <div class="player-container">
-        <video id="webPlayer" class="video-js vjs-default-skin" controls preload="auto"></video>
+    <div class="controls">
+        <input type="text" id="searchInput" placeholder="Search catalog..." onkeyup="fetchLibrary()">
+        <select id="categorySelect" onchange="fetchLibrary()">
+            <option value="all">All Categories</option>
+            <option value="movie">Movies</option>
+            <option value="anime">Anime</option>
+        </select>
+        <button onclick="fetchLibrary()">Refresh Library</button>
+    </div>
+
+    <div class="grid" id="libraryGrid"></div>
+
+    <!-- Video Modal Player -->
+    <div class="player-modal" id="playerModal">
+        <div class="player-content">
+            <button class="close-btn" onclick="closePlayer()">Close</button>
+            <video id="activePlayer" class="video-js vjs-default-skin" controls preload="auto" style="width: 100%; height: 500px;"></video>
+        </div>
     </div>
 
     <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
     <script>
-        let player = videojs('webPlayer');
+        let player = videojs('activePlayer');
 
-        async function loadStream() {
-            const provider = document.getElementById('providerSelect').value;
-            const targetUrl = document.getElementById('targetUrl').value || 'default';
+        async function fetchLibrary() {
+            const search = document.getElementById('searchInput').value;
+            const category = document.getElementById('categorySelect').value;
+            
+            const res = await fetch(`/api/library?search=${encodeURIComponent(search)}&category=${category}`);
+            const data = await res.json();
 
-            try {
-                const res = await fetch(`/api/resolve?provider=${encodeURIComponent(provider)}&targetUrl=${encodeURIComponent(targetUrl)}`);
-                const data = await res.json();
+            document.getElementById('itemCount').innerText = `${data.count} titles loaded`;
+            const grid = document.getElementById('libraryGrid');
+            grid.innerHTML = '';
 
-                if (data.streamUrl) {
-                    player.src({
-                        src: data.streamUrl,
-                        type: data.format === 'm3u8' ? 'application/x-mpegURL' : 'video/mp4'
-                    });
-                    player.play();
-                } else {
-                    alert('Could not resolve playable stream link.');
-                }
-            } catch (err) {
-                alert('Error connecting to extraction endpoint.');
+            data.library.forEach(item => {
+                grid.innerHTML += `
+                    <div class="card">
+                        <img src="${item.poster}" alt="Poster">
+                        <h4>${item.title}</h4>
+                        <span class="badge">${item.provider}</span>
+                        <br><br>
+                        <button onclick="playStream('${item.provider}', '${item.sourceUrl}')">Watch Now</button>
+                    </div>
+                `;
+            });
+        }
+
+        async function playStream(provider, url) {
+            const res = await fetch(`/api/stream?provider=${encodeURIComponent(provider)}&targetUrl=${encodeURIComponent(url)}`);
+            const data = await res.json();
+
+            if (data.streamUrl) {
+                document.getElementById('playerModal').style.display = 'flex';
+                player.src({
+                    src: data.streamUrl,
+                    type: data.format === 'm3u8' ? 'application/x-mpegURL' : 'video/mp4'
+                });
+                player.play();
             }
         }
+
+        function closePlayer() {
+            player.pause();
+            document.getElementById('playerModal').style.display = 'none';
+        }
+
+        // Initialize Library on Load
+        fetchLibrary();
     </script>
 </body>
-  </html>
+</html>
