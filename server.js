@@ -1,100 +1,89 @@
-const express = require("express");
-const cors = require("cors");
-const path = require("path");
-const fs = require("fs");
-const crypto = require("crypto");
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 
-const PORT = toPositiveInt(process.env.PORT, 3000);
+const PORT =
+  Number(process.env.PORT) > 0
+    ? Number(process.env.PORT)
+    : 3000;
 
-const DATA_DIR = path.join(__dirname, "data");
-const CACHE_FILE = path.join(DATA_DIR, "cache.json");
-const EXTENSIONS_FILE = path.join(DATA_DIR, "extensions.json");
-
-const REQUEST_TIMEOUT_MS = toPositiveInt(
-  process.env.REQUEST_TIMEOUT_MS,
-  20000
+const DATA_DIR = path.resolve(
+  process.env.DATA_DIR ||
+    path.join(__dirname, 'data')
 );
 
-const BRIDGE_TIMEOUT_MS = toPositiveInt(
-  process.env.CLOUDSTREAM_BRIDGE_TIMEOUT_MS,
-  130000
+const LIBRARY_FILE = path.resolve(
+  process.env.LIBRARY_CACHE_FILE ||
+    path.join(DATA_DIR, 'cache.json')
 );
 
-const EXTENSION_SYNC_HOURS = toPositiveNumber(
-  process.env.EXTENSION_SYNC_HOURS,
-  6
+const EXTENSIONS_FILE = path.resolve(
+  process.env.EXTENSION_CACHE_FILE ||
+    path.join(DATA_DIR, 'extensions.json')
 );
 
-const BRIDGE_URL = normalizeBaseUrl(
-  process.env.CLOUDSTREAM_BRIDGE_URL ||
-    "http://127.0.0.1:10001"
+const REQUEST_TIMEOUT =
+  Number(process.env.REQUEST_TIMEOUT_MS) > 0
+    ? Number(process.env.REQUEST_TIMEOUT_MS)
+    : 20000;
+
+const BRIDGE_TIMEOUT =
+  Number(process.env.CLOUDSTREAM_BRIDGE_TIMEOUT) > 0
+    ? Number(process.env.CLOUDSTREAM_BRIDGE_TIMEOUT)
+    : 120000;
+
+const SEARCH_LIMIT = Math.min(
+  Math.max(
+    Number(process.env.SEARCH_LIMIT) || 100,
+    1
+  ),
+  200
 );
 
-const USER_AGENT =
-  process.env.USER_AGENT ||
-  "Mediav2/2.0 (+https://github.com/star884/Mediav2)";
+const PROVIDER_LIMIT = Math.min(
+  Math.max(
+    Number(process.env.SEARCH_PROVIDER_LIMIT) || 30,
+    1
+  ),
+  100
+);
 
-const MAX_RESULTS = 100;
+const MAX_LIBRARY = Math.max(
+  Number(process.env.LIBRARY_MAX_ITEMS) || 5000,
+  100
+);
 
-/* ============================================================
-   HELPERS
-============================================================ */
-
-function toPositiveInt(value, fallback) {
-  const n = Number(value);
-  return Number.isInteger(n) && n > 0 ? n : fallback;
-}
-
-function toPositiveNumber(value, fallback) {
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+function text(value, fallback = '') {
+  return typeof value === 'string'
+    ? value.trim()
+    : fallback;
 }
 
 function now() {
   return new Date().toISOString();
 }
 
-function safeString(value, fallback = "") {
-  return typeof value === "string"
-    ? value.trim()
-    : fallback;
-}
-
 function hash(value) {
   return crypto
-    .createHash("sha256")
+    .createHash('sha256')
     .update(String(value))
-    .digest("hex")
+    .digest('hex')
     .slice(0, 24);
 }
 
-function slug(value) {
-  return safeString(value)
+function normalizeName(value) {
+  return text(value)
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 120);
+    .replace(/[^a-z0-9]/g, '');
 }
 
-function normalizeExtensionName(value) {
-  return safeString(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, "");
-}
-
-function normalizeBaseUrl(value) {
-  const url = normalizeUrl(value);
-
-  return url
-    ? url.replace(/\/+$/, "")
-    : "";
-}
-
-function normalizeUrl(value, baseUrl = null) {
+function normalizeUrl(value, base) {
   if (
-    typeof value !== "string" ||
+    typeof value !== 'string' ||
     !value.trim()
   ) {
     return null;
@@ -103,12 +92,12 @@ function normalizeUrl(value, baseUrl = null) {
   try {
     const url = new URL(
       value.trim(),
-      baseUrl || undefined
+      base
     );
 
     if (
-      url.protocol !== "http:" &&
-      url.protocol !== "https:"
+      url.protocol !== 'http:' &&
+      url.protocol !== 'https:'
     ) {
       return null;
     }
@@ -117,6 +106,14 @@ function normalizeUrl(value, baseUrl = null) {
   } catch {
     return null;
   }
+}
+
+function normalizeBaseUrl(value) {
+  const url = normalizeUrl(value);
+
+  return url
+    ? url.replace(/\/+$/, '')
+    : '';
 }
 
 function uniqueBy(items, keyFn) {
@@ -130,10 +127,7 @@ function uniqueBy(items, keyFn) {
   ) {
     const key = keyFn(item);
 
-    if (
-      !key ||
-      seen.has(key)
-    ) {
+    if (!key || seen.has(key)) {
       continue;
     }
 
@@ -151,218 +145,140 @@ function readJson(file, fallback) {
     }
 
     return JSON.parse(
-      fs.readFileSync(
-        file,
-        "utf8"
-      )
+      fs.readFileSync(file, 'utf8')
     );
   } catch (error) {
     console.error(
-      `[Storage] ${file}: ${error.message}`
+      `[storage] ${file}: ${error.message}`
     );
 
     return fallback;
   }
 }
 
-/*
- * Serializes JSON writes so two simultaneous
- * searches/loads cannot corrupt the same file.
- */
 let writeQueue = Promise.resolve();
-
-function writeJson(file, value) {
-  const temporary =
-    `${file}.${process.pid}.${Date.now()}.tmp`;
-
-  fs.writeFileSync(
-    temporary,
-    JSON.stringify(
-      value,
-      null,
-      2
-    ),
-    "utf8"
-  );
-
-  fs.renameSync(
-    temporary,
-    file
-  );
-}
 
 function queueWrite(file, value) {
   writeQueue = writeQueue
     .then(() => {
-      writeJson(
-        file,
-        value
+      const temporary =
+        `${file}.${process.pid}.${Date.now()}.tmp`;
+
+      fs.writeFileSync(
+        temporary,
+        JSON.stringify(value, null, 2),
+        'utf8'
+      );
+
+      fs.renameSync(
+        temporary,
+        file
       );
     })
     .catch(error => {
       console.error(
-        `[Storage] Write failed: ${error.message}`
+        `[storage] ${error.message}`
       );
     });
 
   return writeQueue;
 }
 
-function mimeForFormat(format) {
+function mimeFor(format) {
   switch (
-    safeString(format).toLowerCase()
+    text(format).toLowerCase()
   ) {
-    case "mp4":
-      return "video/mp4";
+    case 'mp4':
+      return 'video/mp4';
 
-    case "webm":
-      return "video/webm";
+    case 'webm':
+      return 'video/webm';
 
-    case "m3u8":
-    case "hls":
-      return "application/vnd.apple.mpegurl";
+    case 'm3u8':
+    case 'hls':
+      return 'application/vnd.apple.mpegurl';
 
-    case "mpd":
-    case "dash":
-      return "application/dash+xml";
+    case 'mpd':
+    case 'dash':
+      return 'application/dash+xml';
 
     default:
       return null;
   }
 }
 
-function extractQuality(value) {
-  const match =
-    safeString(value).match(
-      /(?:^|[._\-\s])(2160|1440|1080|720|576|480|360)p?(?:[._\-\s]|$)/i
-    );
+function quality(value) {
+  const match = text(value).match(
+    /(?:^|[._\-\s])(2160|1440|1080|720|576|480|360)p?(?:[._\-\s]|$)/i
+  );
 
   return match
     ? `${match[1]}p`
-    : "Unknown";
+    : 'Unknown';
 }
-
-/* ============================================================
-   EXPRESS
-============================================================ */
-
-fs.mkdirSync(
-  DATA_DIR,
-  {
-    recursive: true
-  }
-);
-
-app.disable(
-  "x-powered-by"
-);
-
-app.use(
-  cors()
-);
-
-app.use(
-  express.json({
-    limit: "2mb",
-    strict: true
-  })
-);
-
-app.use(
-  express.static(
-    path.join(
-      __dirname,
-      "public"
-    )
-  )
-);
-
-/* ============================================================
-   HTTP JSON
-============================================================ */
 
 async function fetchJson(
   url,
-  options = {}
+  {
+    method = 'GET',
+    body,
+    headers = {},
+    timeout = REQUEST_TIMEOUT
+  } = {}
 ) {
   const controller =
     new AbortController();
 
-  const timeoutMs =
-    toPositiveInt(
-      options.timeout,
-      REQUEST_TIMEOUT_MS
-    );
-
-  const timer =
-    setTimeout(
-      () => controller.abort(),
-      timeoutMs
-    );
+  const timer = setTimeout(
+    () => controller.abort(),
+    timeout
+  );
 
   try {
-    const headers = {
-      Accept:
-        "application/json",
-
-      "User-Agent":
-        USER_AGENT,
-
-      ...(options.headers || {})
+    const requestHeaders = {
+      Accept: 'application/json',
+      'User-Agent': USER_AGENT,
+      ...headers
     };
 
-    const init = {
-      method:
-        options.method ||
-        "GET",
-
-      headers,
-
-      signal:
-        controller.signal
+    const options = {
+      method,
+      headers: requestHeaders,
+      signal: controller.signal
     };
 
-    if (
-      options.body !==
-      undefined
-    ) {
-      init.body =
-        JSON.stringify(
-          options.body
-        );
+    if (body !== undefined) {
+      options.body =
+        JSON.stringify(body);
 
-      headers[
-        "Content-Type"
-      ] =
-        "application/json";
+      requestHeaders[
+        'Content-Type'
+      ] = 'application/json';
     }
 
     const response =
-      await fetch(
-        url,
-        init
-      );
+      await fetch(url, options);
 
-    const text =
+    const bodyText =
       await response.text();
 
     if (!response.ok) {
       throw new Error(
-        `HTTP ${response.status} ${response.statusText}` +
+        `HTTP ${response.status}` +
         (
-          text
-            ? `: ${text.slice(0, 300)}`
-            : ""
+          bodyText
+            ? `: ${bodyText.slice(0, 300)}`
+            : ''
         )
       );
     }
 
-    if (!text.trim()) {
+    if (!bodyText.trim()) {
       return {};
     }
 
     try {
-      return JSON.parse(text);
+      return JSON.parse(bodyText);
     } catch {
       throw new Error(
         `Expected JSON from ${url}`
@@ -370,11 +286,10 @@ async function fetchJson(
     }
   } catch (error) {
     if (
-      error?.name ===
-      "AbortError"
+      error.name === 'AbortError'
     ) {
       throw new Error(
-        `Request timed out after ${timeoutMs}ms`
+        `Request timed out after ${timeout}ms`
       );
     }
 
@@ -384,417 +299,300 @@ async function fetchJson(
   }
 }
 
-/* ============================================================
-   MEDIA NORMALIZATION
-============================================================ */
+function normalizeItem(item = {}) {
+  const providerId = text(
+    item.providerId,
+    text(item.provider, 'unknown')
+  );
 
-function normalizeMediaItem(
-  item = {}
-) {
-  item =
-    item &&
-    typeof item === "object"
-      ? item
-      : {};
+  const providerName = text(
+    item.providerName,
+    text(item.provider, providerId)
+  );
 
-  const providerId =
-    safeString(
-      item.providerId,
-      "unknown"
-    );
+  const sourceId = text(
+    item.sourceId,
+    text(item.id)
+  );
 
-  const providerName =
-    safeString(
-      item.providerName,
-      providerId
-    );
-
-  const sourceId =
-    safeString(
-      item.sourceId,
-      safeString(item.id)
-    );
-
-  const title =
-    safeString(
-      item.title,
-      "Untitled"
-    );
-
-  const id =
-    safeString(item.id) ||
-    hash(
-      `${providerId}:${sourceId}:${title}`
-    );
-
-  const yearNumber =
-    Number(item.year);
+  const title = text(
+    item.title,
+    text(item.name, 'Untitled')
+  );
 
   return {
-    id,
+    ...item,
+
+    id:
+      text(item.id) ||
+      hash(
+        `${providerId}:${sourceId}:${title}`
+      ),
 
     providerId,
-
     providerName,
-
     sourceId,
 
-    sourceUrl:
-      normalizeUrl(
-        item.sourceUrl ||
-        item.url ||
-        item.link
-      ),
+    sourceUrl: normalizeUrl(
+      item.sourceUrl ||
+      item.url ||
+      item.link
+    ),
 
     title,
 
     originalTitle:
-      safeString(
+      text(
         item.originalTitle,
         title
       ),
 
     type:
-      safeString(
+      text(
         item.type,
-        "unknown"
+        'unknown'
       ).toLowerCase(),
 
     year:
       Number.isFinite(
-        yearNumber
-      ) &&
-      yearNumber > 0
-        ? yearNumber
+        Number(item.year)
+      )
+        ? Number(item.year)
         : null,
 
-    poster:
-      normalizeUrl(
-        item.poster ||
-        item.posterUrl ||
-        item.image
-      ),
+    poster: normalizeUrl(
+      item.poster ||
+      item.posterUrl ||
+      item.image
+    ),
 
-    backdrop:
-      normalizeUrl(
-        item.backdrop ||
-        item.backdropUrl
-      ),
+    backdrop: normalizeUrl(
+      item.backdrop ||
+      item.backdropUrl
+    ),
 
     description:
-      safeString(
-        item.description
+      text(
+        item.description ||
+        item.plot
       ),
-
-    rating:
-      item.rating ??
-      null,
-
-    duration:
-      item.duration ??
-      null,
-
-    genres:
-      Array.isArray(
-        item.genres
-      )
-        ? item.genres
-        : [],
-
-    tags:
-      Array.isArray(
-        item.tags
-      )
-        ? item.tags
-        : [],
-
-    language:
-      safeString(
-        item.language
-      ),
-
-    country:
-      safeString(
-        item.country
-      ),
-
-    season:
-      item.season ??
-      null,
-
-    episode:
-      item.episode ??
-      null,
-
-    data:
-      safeString(
-        item.data
-      ) ||
-      null,
 
     episodes:
-      Array.isArray(
-        item.episodes
-      )
+      Array.isArray(item.episodes)
         ? item.episodes
         : [],
 
     seasons:
-      Array.isArray(
-        item.seasons
-      )
+      Array.isArray(item.seasons)
         ? item.seasons
         : [],
 
     sources:
-      Array.isArray(
-        item.sources
-      )
+      Array.isArray(item.sources)
         ? item.sources
         : [],
 
     metadata:
       item.metadata &&
-      typeof item.metadata === "object"
+      typeof item.metadata === 'object'
         ? item.metadata
         : {},
 
     raw:
       item.raw &&
-      typeof item.raw === "object"
+      typeof item.raw === 'object'
         ? item.raw
         : null
   };
 }
 
-/* ============================================================
-   LIBRARY
-============================================================ */
-
-let mediaLibrary =
+let library =
   readJson(
-    CACHE_FILE,
+    LIBRARY_FILE,
     []
   );
 
-if (
-  !Array.isArray(
-    mediaLibrary
-  )
-) {
-  mediaLibrary = [];
+if (!Array.isArray(library)) {
+  library = [];
 }
 
 function libraryKey(item) {
   return (
-    `${normalizeExtensionName(
-      item.providerId
-    )}:` +
-    `${safeString(
+    `${normalizeName(item.providerId)}:` +
+    `${text(
       item.sourceId,
-      safeString(item.id)
+      text(item.id)
     )}`
   );
 }
 
-function mergeMedia(
-  oldItem,
-  newItem
-) {
-  const merged = {
-    ...oldItem,
-    ...newItem
-  };
+function mergeIntoLibrary(items) {
+  const map = new Map(
+    library.map(item => [
+      libraryKey(item),
+      item
+    ])
+  );
 
   for (
-    const key of [
-      "sourceUrl",
-      "poster",
-      "backdrop",
-      "description",
-      "data",
-      "rating",
-      "duration"
-    ]
-  ) {
-    if (
-      !newItem[key] &&
-      oldItem[key]
-    ) {
-      merged[key] =
-        oldItem[key];
-    }
-  }
-
-  for (
-    const key of [
-      "genres",
-      "tags",
-      "episodes",
-      "seasons",
-      "sources"
-    ]
-  ) {
-    if (
-      (
-        !Array.isArray(
-          newItem[key]
-        ) ||
-        !newItem[key].length
-      ) &&
-      Array.isArray(
-        oldItem[key]
-      )
-    ) {
-      merged[key] =
-        oldItem[key];
-    }
-  }
-
-  merged.metadata = {
-    ...(oldItem.metadata || {}),
-    ...(newItem.metadata || {})
-  };
-
-  return merged;
-}
-
-function mergeIntoLibrary(
-  items
-) {
-  const normalized =
-    (
+    const item of (
       Array.isArray(items)
         ? items
         : []
     )
-      .map(
-        normalizeMediaItem
-      )
+      .map(normalizeItem)
       .filter(
         item =>
-          item.title !==
-          "Untitled"
-      );
-
-  const existing =
-    new Map(
-      mediaLibrary.map(
-        item => [
-          libraryKey(item),
-          item
-        ]
+          item.title !== 'Untitled'
       )
-    );
-
-  for (
-    const item of normalized
   ) {
     const key =
       libraryKey(item);
 
     const old =
-      existing.get(key);
+      map.get(key);
 
-    existing.set(
+    map.set(
       key,
       old
-        ? mergeMedia(
-            old,
-            item
-          )
+        ? {
+            ...old,
+            ...item,
+
+            sourceUrl:
+              item.sourceUrl ||
+              old.sourceUrl ||
+              null,
+
+            poster:
+              item.poster ||
+              old.poster ||
+              null,
+
+            backdrop:
+              item.backdrop ||
+              old.backdrop ||
+              null,
+
+            description:
+              item.description ||
+              old.description ||
+              '',
+
+            data:
+              item.data ||
+              old.data ||
+              null,
+
+            episodes:
+              item.episodes.length
+                ? item.episodes
+                : old.episodes || [],
+
+            seasons:
+              item.seasons.length
+                ? item.seasons
+                : old.seasons || [],
+
+            sources:
+              item.sources.length
+                ? item.sources
+                : old.sources || [],
+
+            metadata: {
+              ...(old.metadata || {}),
+              ...(item.metadata || {})
+            }
+          }
         : item
     );
   }
 
-  mediaLibrary =
-    [
-      ...existing.values()
-    ];
+  library = [
+    ...map.values()
+  ].slice(-MAX_LIBRARY);
 
-  queueWrite(
-    CACHE_FILE,
-    mediaLibrary
+  void queueWrite(
+    LIBRARY_FILE,
+    library
   );
-
-  return normalized;
 }
 
-/* ============================================================
-   NATIVE PROVIDERS
-============================================================ */
-
-const providers =
+const nativeProviders =
   new Map();
 
-function registerProvider(
-  provider
-) {
-  if (
-    !provider ||
-    !provider.id
-  ) {
-    throw new Error(
-      "Provider requires an id"
-    );
+function archiveItem(data) {
+  const id =
+    text(data?.identifier);
+
+  if (!id) {
+    return null;
   }
 
-  providers.set(
-    provider.id,
-    provider
-  );
+  return normalizeItem({
+    id,
+    sourceId: id,
+    providerId:
+      'internet-archive',
+    providerName:
+      'Internet Archive',
+
+    title:
+      text(
+        data.title,
+        id
+      ),
+
+    description:
+      data.description,
+
+    year:
+      data.year,
+
+    type:
+      'movie',
+
+    sourceUrl:
+      `https://archive.org/details/${encodeURIComponent(id)}`
+  });
 }
 
-/* ============================================================
-   INTERNET ARCHIVE
-============================================================ */
-
-const InternetArchiveProvider = {
+const InternetArchive = {
   id:
-    "internet-archive",
+    'internet-archive',
 
   name:
-    "Internet Archive",
+    'Internet Archive',
 
   type:
-    "public-media",
+    'public-media',
 
   async search(
     query,
-    options = {}
+    { limit = 40 } = {}
   ) {
-    const q =
-      safeString(query);
-
-    if (!q) {
+    if (!text(query)) {
       return [];
     }
 
-    const rows =
-      Math.min(
-        toPositiveInt(
-          options.limit,
-          40
-        ),
-        MAX_RESULTS
-      );
-
     const params =
       new URLSearchParams({
         q:
-          `title:(${q}) AND mediatype:movies`,
+          `title:(${query}) AND mediatype:movies`,
 
         fl:
-          "identifier,title,description,year,date",
+          'identifier,title,description,year,date',
 
         rows:
-          String(rows),
+          String(
+            Math.min(
+              limit,
+              100
+            )
+          ),
 
         output:
-          "json",
-
-        page:
-          "1"
+          'json'
       });
 
     const data =
@@ -802,48 +600,38 @@ const InternetArchiveProvider = {
         `https://archive.org/advancedsearch.php?${params}`
       );
 
-    return Array.isArray(
-      data?.response?.docs
+    return (
+      data?.response?.docs ||
+      []
     )
-      ? data.response.docs
-          .map(
-            archiveItem
-          )
-          .filter(Boolean)
-      : [];
+      .map(archiveItem)
+      .filter(Boolean);
   },
 
   async home(
-    options = {}
+    { limit = 40 } = {}
   ) {
-    const rows =
-      Math.min(
-        toPositiveInt(
-          options.limit,
-          40
-        ),
-        MAX_RESULTS
-      );
-
     const params =
       new URLSearchParams({
         q:
-          "mediatype:movies",
+          'mediatype:movies',
 
         fl:
-          "identifier,title,description,year,date",
+          'identifier,title,description,year,date',
 
         rows:
-          String(rows),
+          String(
+            Math.min(
+              limit,
+              100
+            )
+          ),
 
         output:
-          "json",
-
-        page:
-          "1",
+          'json',
 
         sort:
-          "downloads desc"
+          'downloads desc'
       });
 
     const data =
@@ -851,52 +639,31 @@ const InternetArchiveProvider = {
         `https://archive.org/advancedsearch.php?${params}`
       );
 
-    return Array.isArray(
-      data?.response?.docs
+    return (
+      data?.response?.docs ||
+      []
     )
-      ? data.response.docs
-          .map(
-            archiveItem
-          )
-          .filter(Boolean)
-      : [];
+      .map(archiveItem)
+      .filter(Boolean);
   },
 
-  async load(
-    item
-  ) {
-    const identifier =
-      safeString(
+  async load(item) {
+    const id =
+      text(
         item.sourceId,
-        safeString(item.id)
+        item.id
       );
 
-    if (!identifier) {
-      throw new Error(
-        "Missing Internet Archive identifier"
-      );
-    }
-
-    const metadata =
+    const data =
       await fetchJson(
-        `https://archive.org/metadata/${encodeURIComponent(
-          identifier
-        )}`
+        `https://archive.org/metadata/${encodeURIComponent(id)}`
       );
 
     const sources =
-      (
-        Array.isArray(
-          metadata?.files
-        )
-          ? metadata.files
-          : []
-      )
+      (data?.files || [])
         .map(file => {
           const name =
-            safeString(
-              file?.name
-            );
+            text(file?.name);
 
           if (!name) {
             return null;
@@ -905,67 +672,58 @@ const InternetArchiveProvider = {
           const lower =
             name.toLowerCase();
 
-          let format =
-            "";
+          let format = '';
 
           if (
             lower.endsWith(
-              ".m3u8"
+              '.m3u8'
             )
           ) {
-            format =
-              "hls";
+            format = 'hls';
           } else if (
             lower.endsWith(
-              ".mp4"
+              '.mp4'
             )
           ) {
-            format =
-              "mp4";
+            format = 'mp4';
           } else if (
             lower.endsWith(
-              ".webm"
+              '.webm'
             )
           ) {
-            format =
-              "webm";
-          } else {
+            format = 'webm';
+          }
+
+          if (!format) {
             return null;
           }
 
-          const encodedPath =
+          const encoded =
             name
-              .split("/")
+              .split('/')
               .map(
                 encodeURIComponent
               )
-              .join("/");
+              .join('/');
 
           return {
             id:
               hash(
-                `${identifier}:${name}`
+                `${id}:${name}`
               ),
 
-            title:
-              name,
+            name,
 
             url:
-              `https://archive.org/download/${encodeURIComponent(
-                identifier
-              )}/${encodedPath}`,
+              `https://archive.org/download/${encodeURIComponent(id)}/${encoded}`,
 
             format,
 
             mime:
-              mimeForFormat(
-                format
-              ),
+              mimeFor(format),
 
             quality:
-              extractQuality(
-                name
-              ),
+              quality(name),
 
             providerId:
               this.id,
@@ -976,174 +734,113 @@ const InternetArchiveProvider = {
         })
         .filter(Boolean);
 
-    return {
+    return normalizeItem({
       ...archiveItem({
-        identifier,
+        identifier: id,
 
         title:
-          metadata?.metadata?.title,
+          data?.metadata?.title,
 
         description:
-          metadata?.metadata?.description,
+          data?.metadata?.description,
 
         year:
-          metadata?.metadata?.year
+          data?.metadata?.year
       }),
 
       sources:
         uniqueBy(
           sources,
-          source =>
-            source.url
+          source => source.url
         )
-    };
+    });
   },
 
-  async sources(
-    item
-  ) {
-    const loaded =
-      await this.load(
-        item
-      );
-
+  async sources(item) {
     return (
-      loaded.sources ||
-      []
-    );
+      await this.load(item)
+    ).sources || [];
   }
 };
 
-function archiveItem(
-  doc
-) {
-  const identifier =
-    safeString(
-      doc?.identifier
-    );
-
-  if (!identifier) {
-    return null;
-  }
-
-  return normalizeMediaItem({
-    providerId:
-      "internet-archive",
-
-    providerName:
-      "Internet Archive",
-
-    id:
-      identifier,
-
-    sourceId:
-      identifier,
-
-    sourceUrl:
-      `https://archive.org/details/${encodeURIComponent(
-        identifier
-      )}`,
-
-    title:
-      safeString(
-        doc?.title,
-        identifier
-      ),
-
-    description:
-      safeString(
-        doc?.description
-      ),
-
-    year:
-      doc?.year,
-
-    type:
-      "movie"
-  });
-}
-
-registerProvider(
-  InternetArchiveProvider
+nativeProviders.set(
+  InternetArchive.id,
+  InternetArchive
 );
 
-/* ============================================================
-   CLOUDSTREAM REPOSITORIES
-============================================================ */
-
-const DEFAULT_CLOUDSTREAM_REPOSITORIES = [
+const DEFAULT_REPOS = [
   {
     id:
-      "phisherrepo",
+      'phisherrepo',
 
     name:
-      "Phisher Repo",
+      'Phisher Repo',
 
     url:
-      "https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json"
+      'https://raw.githubusercontent.com/phisher98/cloudstream-extensions-phisher/refs/heads/builds/repo.json'
   },
 
   {
     id:
-      "csx",
+      'csx',
 
     name:
-      "CSX",
+      'CSX',
 
     url:
-      "https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json"
+      'https://raw.githubusercontent.com/SaurabhKaperwan/CSX/builds/CS.json'
   },
 
   {
     id:
-      "streamplay",
+      'streamplay',
 
     name:
-      "StreamPlay",
+      'StreamPlay',
 
     url:
-      "https://raw.githubusercontent.com/tpadev/phiser-streamplay/builds/repo.json"
+      'https://raw.githubusercontent.com/tpadev/phiser-streamplay/builds/repo.json'
   }
 ];
 
-const REQUESTED_EXTENSIONS = [
-  "StreamPlay",
-  "MovieBox",
-  "4KHDHUB",
-  "AniDB",
-  "AnimePahe",
-  "CineStream"
+const REQUESTED = [
+  'StreamPlay',
+  'MovieBox',
+  '4KHDHUB',
+  'AniDB',
+  'AnimePahe',
+  'CineStream'
 ];
 
-const EXTENSION_ALIASES = {
+const ALIASES = {
   streamplay: [
-    "streamplay"
+    'streamplay'
   ],
 
   moviebox: [
-    "moviebox",
-    "movieboxprovider"
+    'moviebox',
+    'movieboxprovider'
   ],
 
-  "4khdhub": [
-    "4khdhub",
-    "fourkhdhub",
-    "fourkhdhubprovider"
+  '4khdhub': [
+    '4khdhub',
+    'fourkhdhub',
+    'fourkhdhubprovider'
   ],
 
   anidb: [
-    "anidb",
-    "anidbprovider"
+    'anidb',
+    'anidbprovider'
   ],
 
   animepahe: [
-    "animepahe",
-    "animepaheprovider"
+    'animepahe',
+    'animepaheprovider'
   ],
 
   cinestream: [
-    "cinestream",
-    "cinestreamprovider"
+    'cinestream',
+    'cinestreamprovider'
   ]
 };
 
@@ -1151,283 +848,93 @@ let extensionState =
   readJson(
     EXTENSIONS_FILE,
     {
-      version:
-        2,
-
-      updatedAt:
-        null,
-
-      repositories:
-        [],
-
-      extensions:
-        [],
-
-      enabledExtensions:
-        []
+      version: 3,
+      updatedAt: null,
+      repositories: [],
+      extensions: [],
+      enabledExtensions: []
     }
   );
 
-if (
-  !extensionState ||
-  typeof extensionState !==
-    "object"
-) {
-  extensionState = {
-    version:
-      2,
-
-    updatedAt:
-      null,
-
-    repositories:
-      [],
-
-    extensions:
-      [],
-
-    enabledExtensions:
-      []
-  };
-}
-
-function getConfiguredRepositories() {
+function repos() {
   const raw =
-    safeString(
+    text(
       process.env
         .CLOUDSTREAM_REPOSITORIES
     );
 
   if (!raw) {
-    return DEFAULT_CLOUDSTREAM_REPOSITORIES;
+    return DEFAULT_REPOS;
   }
 
   return raw
-    .split(",")
+    .split(',')
     .map(
-      value =>
-        value.trim()
-    )
-    .filter(Boolean)
-    .map(
-      (
-        url,
-        index
-      ) => ({
+      (url, index) => ({
         id:
-          `custom-${index + 1}-${hash(
-            url
-          )}`,
+          `custom-${index + 1}-${hash(url)}`,
 
         name:
           `CloudStream Repository ${index + 1}`,
 
-        url
+        url:
+          url.trim()
       })
+    )
+    .filter(
+      item => item.url
     );
 }
 
 function extensionMatches(
   extension,
-  requested
+  wanted
 ) {
   const target =
-    normalizeExtensionName(
-      requested
-    );
+    normalizeName(wanted);
 
   const values = [
     extension?.name,
     extension?.internalName
   ]
-    .map(
-      normalizeExtensionName
-    )
+    .map(normalizeName)
     .filter(Boolean);
 
-  if (
-    values.includes(
-      target
-    )
-  ) {
-    return true;
-  }
-
   return (
-    EXTENSION_ALIASES[
-      target
-    ] || []
-  ).some(
-    alias =>
-      values.includes(
-        normalizeExtensionName(
-          alias
+    values.includes(target) ||
+    (
+      ALIASES[target] || []
+    ).some(
+      alias =>
+        values.includes(
+          normalizeName(alias)
         )
-      )
+    )
   );
-}
-
-function normalizeExtension(
-  plugin,
-  repository,
-  listUrl
-) {
-  if (
-    !plugin ||
-    typeof plugin !==
-      "object"
-  ) {
-    return null;
-  }
-
-  const name =
-    safeString(
-      plugin.name,
-      safeString(
-        plugin.internalName,
-        "Unknown Extension"
-      )
-    );
-
-  const internalName =
-    safeString(
-      plugin.internalName,
-      name
-    );
-
-  const pluginUrl =
-    normalizeUrl(
-      plugin.url ||
-        plugin.file ||
-        plugin.downloadUrl,
-      listUrl ||
-        repository.url
-    );
-
-  if (!pluginUrl) {
-    return null;
-  }
-
-  return {
-    id:
-      hash(
-        `${repository.id}:${internalName}:${pluginUrl}`
-      ),
-
-    name,
-
-    internalName,
-
-    pluginUrl,
-
-    url:
-      pluginUrl,
-
-    status:
-      plugin.status ??
-      null,
-
-    version:
-      plugin.version ??
-      null,
-
-    apiVersion:
-      plugin.apiVersion ??
-      null,
-
-    description:
-      safeString(
-        plugin.description
-      ),
-
-    repositoryUrl:
-      normalizeUrl(
-        plugin.repositoryUrl,
-        repository.url
-      ),
-
-    iconUrl:
-      normalizeUrl(
-        plugin.iconUrl ||
-          plugin.icon,
-        listUrl ||
-          repository.url
-      ),
-
-    tvTypes:
-      Array.isArray(
-        plugin.tvTypes
-      )
-        ? plugin.tvTypes
-        : [],
-
-    language:
-      Array.isArray(
-        plugin.language
-      )
-        ? plugin.language
-        : (
-            safeString(
-              plugin.language
-            )
-              ? [
-                  plugin.language
-                ]
-              : []
-          ),
-
-    authors:
-      Array.isArray(
-        plugin.authors
-      )
-        ? plugin.authors
-        : [],
-
-    fileSize:
-      plugin.fileSize ??
-      null,
-
-    fileHash:
-      safeString(
-        plugin.fileHash
-      ),
-
-    repositoryId:
-      repository.id,
-
-    repositoryName:
-      repository.name,
-
-    discoveredAt:
-      now()
-  };
 }
 
 function extractPlugins(
   manifest
 ) {
   if (
-    Array.isArray(
-      manifest
-    )
+    Array.isArray(manifest)
   ) {
     return manifest;
   }
 
   if (
     !manifest ||
-    typeof manifest !==
-      "object"
+    typeof manifest !== 'object'
   ) {
     return [];
   }
 
   for (
     const key of [
-      "plugins",
-      "pluginList",
-      "items",
-      "extensions"
+      'plugins',
+      'pluginList',
+      'items',
+      'extensions'
     ]
   ) {
     if (
@@ -1442,129 +949,233 @@ function extractPlugins(
   return [];
 }
 
-function pluginListUrls(
+function pluginLists(
   manifest,
-  repositoryUrl
+  base
 ) {
-  const lists =
+  return (
     Array.isArray(
       manifest?.pluginLists
     )
       ? manifest.pluginLists
-      : [];
-
-  return lists
+      : []
+  )
     .map(
-      item =>
-        typeof item ===
-        "string"
-          ? item
-          : item?.url ||
-            item?.urlString ||
-            item?.file
+      value =>
+        typeof value === 'string'
+          ? value
+          : value?.url ||
+            value?.urlString ||
+            value?.file
     )
     .map(
       value =>
         normalizeUrl(
           value,
-          repositoryUrl
+          base
         )
     )
     .filter(Boolean);
 }
 
-async function syncOneRepository(
-  repository
+function normalizeExtension(
+  plugin,
+  repo,
+  base
+) {
+  const name =
+    text(
+      plugin?.name,
+      text(
+        plugin?.internalName
+      )
+    );
+
+  if (!name) {
+    return null;
+  }
+
+  const internalName =
+    text(
+      plugin?.internalName,
+      name
+    );
+
+  const url =
+    normalizeUrl(
+      plugin?.url ||
+        plugin?.file ||
+        plugin?.downloadUrl,
+      base
+    );
+
+  if (!url) {
+    return null;
+  }
+
+  return {
+    id:
+      hash(
+        `${repo.id}:${internalName}:${url}`
+      ),
+
+    name,
+
+    internalName,
+
+    pluginUrl:
+      url,
+
+    url,
+
+    status:
+      plugin?.status ?? null,
+
+    version:
+      plugin?.version ?? null,
+
+    apiVersion:
+      plugin?.apiVersion ?? null,
+
+    description:
+      text(
+        plugin?.description
+      ),
+
+    repositoryUrl:
+      normalizeUrl(
+        plugin?.repositoryUrl,
+        base
+      ),
+
+    iconUrl:
+      normalizeUrl(
+        plugin?.iconUrl ||
+          plugin?.icon,
+        base
+      ),
+
+    tvTypes:
+      Array.isArray(
+        plugin?.tvTypes
+      )
+        ? plugin.tvTypes
+        : [],
+
+    language:
+      Array.isArray(
+        plugin?.language
+      )
+        ? plugin.language
+        : text(
+            plugin?.language
+          )
+          ? [
+              plugin.language
+            ]
+          : [],
+
+    authors:
+      Array.isArray(
+        plugin?.authors
+      )
+        ? plugin.authors
+        : [],
+
+    fileSize:
+      plugin?.fileSize ??
+      null,
+
+    fileHash:
+      text(
+        plugin?.fileHash
+      ),
+
+    repositoryId:
+      repo.id,
+
+    repositoryName:
+      repo.name,
+
+    discoveredAt:
+      now()
+  };
+}
+
+async function syncRepository(
+  repo
 ) {
   const manifest =
     await fetchJson(
-      repository.url
+      repo.url
     );
 
   const extensions =
-    [];
-
-  for (
-    const plugin of
-      extractPlugins(
-        manifest
-      )
-  ) {
-    const extension =
-      normalizeExtension(
-        plugin,
-        repository,
-        repository.url
-      );
-
-    if (extension) {
-      extensions.push(
-        extension
-      );
-    }
-  }
-
-  const lists =
-    pluginListUrls(
-      manifest,
-      repository.url
-    );
-
-  for (
-    const listUrl of lists
-  ) {
-    try {
-      const list =
-        await fetchJson(
-          listUrl
-        );
-
-      for (
-        const plugin of
-          extractPlugins(
-            list
-          )
-      ) {
-        const extension =
+    extractPlugins(
+      manifest
+    )
+      .map(
+        plugin =>
           normalizeExtension(
             plugin,
-            repository,
-            listUrl
-          );
+            repo,
+            repo.url
+          )
+      )
+      .filter(Boolean);
 
-        if (extension) {
-          extensions.push(
-            extension
-          );
-        }
-      }
-    } catch (
-      error
-    ) {
+  for (
+    const list of pluginLists(
+      manifest,
+      repo.url
+    )
+  ) {
+    try {
+      const child =
+        await fetchJson(list);
+
+      extensions.push(
+        ...extractPlugins(
+          child
+        )
+          .map(
+            plugin =>
+              normalizeExtension(
+                plugin,
+                repo,
+                list
+              )
+          )
+          .filter(Boolean)
+      );
+    } catch (error) {
       console.warn(
-        `[Extensions] ${repository.name}: ${listUrl}: ${error.message}`
+        `[extensions] ${repo.name}: ${error.message}`
       );
     }
   }
 
   return {
     repository: {
-      ...repository,
+      ...repo,
 
       status:
-        "online",
+        'online',
 
       manifestVersion:
         manifest?.manifestVersion ??
         null,
 
       description:
-        safeString(
+        text(
           manifest?.description
         ),
 
       pluginLists:
-        lists,
+        pluginLists(
+          manifest,
+          repo.url
+        ),
 
       checkedAt:
         now()
@@ -1574,38 +1185,25 @@ async function syncOneRepository(
   };
 }
 
-/*
- * Prevents multiple /api/sync requests or scheduled
- * syncs from modifying extension state simultaneously.
- */
-let extensionSyncInProgress =
-  null;
+let syncPromise = null;
 
 async function syncExtensions() {
-  if (
-    extensionSyncInProgress
-  ) {
-    return extensionSyncInProgress;
+  if (syncPromise) {
+    return syncPromise;
   }
 
-  extensionSyncInProgress =
+  syncPromise =
     (async () => {
-      const repositories =
-        getConfiguredRepositories();
-
-      const repositoryResults =
-        [];
-
-      const discovered =
-        [];
+      const repositoryResults = [];
+      const discovered = [];
 
       await Promise.all(
-        repositories.map(
-          async repository => {
+        repos().map(
+          async repo => {
             try {
               const result =
-                await syncOneRepository(
-                  repository
+                await syncRepository(
+                  repo
                 );
 
               repositoryResults.push(
@@ -1615,22 +1213,12 @@ async function syncExtensions() {
               discovered.push(
                 ...result.extensions
               );
-
-              console.log(
-                `[Extensions] ${repository.name}: ${result.extensions.length} extensions`
-              );
-            } catch (
-              error
-            ) {
-              console.error(
-                `[Extensions] ${repository.name}: ${error.message}`
-              );
-
+            } catch (error) {
               repositoryResults.push({
-                ...repository,
+                ...repo,
 
                 status:
-                  "offline",
+                  'offline',
 
                 error:
                   error.message,
@@ -1647,7 +1235,7 @@ async function syncExtensions() {
         uniqueBy(
           discovered,
           extension =>
-            `${normalizeExtensionName(
+            `${normalizeName(
               extension.internalName
             )}:${extension.pluginUrl}`
         );
@@ -1655,18 +1243,17 @@ async function syncExtensions() {
       const enabledExtensions =
         extensions.filter(
           extension =>
-            REQUESTED_EXTENSIONS.some(
-              requested =>
+            REQUESTED.some(
+              wanted =>
                 extensionMatches(
                   extension,
-                  requested
+                  wanted
                 )
             )
         );
 
       extensionState = {
-        version:
-          2,
+        version: 3,
 
         updatedAt:
           now(),
@@ -1679,43 +1266,22 @@ async function syncExtensions() {
         enabledExtensions
       };
 
-      queueWrite(
+      await queueWrite(
         EXTENSIONS_FILE,
         extensionState
       );
-
-      for (
-        const requested of
-          REQUESTED_EXTENSIONS
-      ) {
-        const found =
-          enabledExtensions.some(
-            extension =>
-              extensionMatches(
-                extension,
-                requested
-              )
-          );
-
-        if (!found) {
-          console.warn(
-            `[Extensions] ${requested}: NOT FOUND`
-          );
-        }
-      }
 
       return extensionState;
     })();
 
   try {
-    return await extensionSyncInProgress;
+    return await syncPromise;
   } finally {
-    extensionSyncInProgress =
-      null;
+    syncPromise = null;
   }
 }
 
-function getEnabledExtensions() {
+function enabledExtensions() {
   return Array.isArray(
     extensionState.enabledExtensions
   )
@@ -1727,117 +1293,363 @@ function findExtension(
   value
 ) {
   const target =
-    normalizeExtensionName(
-      value
-    );
+    normalizeName(value);
 
   if (!target) {
     return null;
   }
 
-  return getEnabledExtensions()
-    .find(
+  return (
+    enabledExtensions().find(
       extension =>
         [
           extension.name,
           extension.internalName,
           extension.id
         ].some(
-          value =>
-            normalizeExtensionName(
-              value
+          candidate =>
+            normalizeName(
+              candidate
             ) === target
         )
-    ) ||
-    null;
+    ) || null
+  );
 }
 
-/* ============================================================
-   CLOUDSTREAM BRIDGE
-============================================================ */
+const BRIDGE_URL =
+  normalizeBaseUrl(
+    process.env
+      .CLOUDSTREAM_BRIDGE_URL ||
+      ''
+  );
+
+const BRIDGE_TOKEN =
+  String(
+    process.env
+      .CLOUDSTREAM_BRIDGE_TOKEN ||
+      ''
+  ).trim();
+
+const USER_AGENT =
+  process.env.HTTP_USER_AGENT ||
+  'Mediav2/2.1';
+
+const BRIDGE_PATHS = {
+  search:
+    text(
+      process.env
+        .CLOUDSTREAM_BRIDGE_SEARCH_PATH,
+      '/search'
+    ),
+
+  home:
+    text(
+      process.env
+        .CLOUDSTREAM_BRIDGE_HOME_PATH,
+      '/home'
+    ),
+
+  load:
+    text(
+      process.env
+        .CLOUDSTREAM_BRIDGE_LOAD_PATH,
+      '/load'
+    ),
+
+  sources:
+    text(
+      process.env
+        .CLOUDSTREAM_BRIDGE_SOURCES_PATH,
+      '/sources'
+    )
+};
 
 async function bridgeRequest(
-  endpoint,
-  body = {}
+  type,
+  body
 ) {
   if (!BRIDGE_URL) {
     throw new Error(
-      "CloudStream bridge URL is invalid or not configured"
+      'CloudStream bridge is not configured'
     );
   }
 
+  const headers =
+    BRIDGE_TOKEN
+      ? {
+          Authorization:
+            `Bearer ${BRIDGE_TOKEN}`
+        }
+      : {};
+
+  const configuredPath =
+    BRIDGE_PATHS[type];
+
+  const requestPath =
+    configuredPath.startsWith('/')
+      ? configuredPath
+      : `/${configuredPath}`;
+
   return fetchJson(
-    `${BRIDGE_URL}/${endpoint.replace(
-      /^\/+/,
-      ""
-    )}`,
+    `${BRIDGE_URL}${requestPath}`,
     {
-      method:
-        "POST",
-
+      method: 'POST',
       body,
-
+      headers,
       timeout:
-        BRIDGE_TIMEOUT_MS
+        BRIDGE_TIMEOUT
     }
   );
 }
 
-function bridgeResultArray(
-  result,
+function bridgeArray(
+  data,
   key
 ) {
   if (
-    Array.isArray(result)
+    Array.isArray(data)
   ) {
-    return result;
+    return data;
   }
 
   if (
     Array.isArray(
-      result?.[key]
+      data?.[key]
     )
   ) {
-    return result[key];
+    return data[key];
   }
 
   return [];
 }
 
+function normalizeBridgeResult(
+  value
+) {
+  if (
+    !value ||
+    typeof value !== 'object'
+  ) {
+    return null;
+  }
+
+  const provider =
+    value.provider &&
+    typeof value.provider ===
+      'object'
+      ? value.provider
+      : null;
+
+  const providerName =
+    text(
+      value.providerName,
+      text(
+        provider?.name,
+        typeof value.provider ===
+          'string'
+          ? value.provider
+          : 'CloudStream'
+      )
+    );
+
+  const providerId =
+    text(
+      value.providerId,
+      text(
+        provider?.id,
+        providerName
+      )
+    );
+
+  return normalizeItem({
+    ...value,
+
+    providerId,
+
+    providerName,
+
+    sourceUrl:
+      value.sourceUrl ||
+      value.url ||
+      value.link,
+
+    sourceId:
+      text(
+        value.sourceId,
+        text(
+          value.url,
+          text(
+            value.id
+          )
+        )
+      ),
+
+    raw:
+      value.raw ||
+      value
+  });
+}
+
+function normalizeSources(
+  list,
+  parent
+) {
+  return uniqueBy(
+    (
+      Array.isArray(list)
+        ? list
+        : []
+    )
+      .map(source => {
+        if (
+          typeof source ===
+          'string'
+        ) {
+          source = {
+            url: source
+          };
+        }
+
+        if (
+          !source ||
+          typeof source !==
+            'object'
+        ) {
+          return null;
+        }
+
+        const url =
+          normalizeUrl(
+            source.url ||
+              source.link
+          );
+
+        if (!url) {
+          return null;
+        }
+
+        let format =
+          text(
+            source.format,
+            text(
+              source.type
+            )
+          ).toLowerCase();
+
+        if (!format) {
+          if (
+            /\.m3u8(?:$|\?)/i.test(
+              url
+            )
+          ) {
+            format = 'hls';
+          } else if (
+            /\.mpd(?:$|\?)/i.test(
+              url
+            )
+          ) {
+            format = 'dash';
+          } else {
+            format = 'video';
+          }
+        }
+
+        return {
+          id:
+            text(
+              source.id,
+              hash(url)
+            ),
+
+          name:
+            text(
+              source.name,
+              text(
+                source.title,
+                'Source'
+              )
+            ),
+
+          url,
+
+          format,
+
+          mime:
+            source.mime ||
+            mimeFor(format),
+
+          quality:
+            text(
+              source.quality,
+              quality(
+                source.name ||
+                url
+              )
+            ),
+
+          headers:
+            source.headers &&
+            typeof source.headers ===
+              'object'
+              ? source.headers
+              : {},
+
+          referer:
+            text(
+              source.referer ||
+              source.referrer
+            ),
+
+          subtitles:
+            Array.isArray(
+              source.subtitles
+            )
+              ? source.subtitles
+              : [],
+
+          providerId:
+            parent.providerId,
+
+          providerName:
+            parent.providerName,
+
+          raw:
+            source
+        };
+      })
+      .filter(Boolean),
+
+    source =>
+      source.url
+  );
+}
+
 async function bridgeSearch(
   query,
-  options = {}
+  options
 ) {
-  const result =
+  const data =
     await bridgeRequest(
-      "search",
+      'search',
       {
-        query:
-          safeString(query),
+        query,
 
         type:
-          safeString(
-            options.type,
-            "all"
-          ),
+          options.type ||
+          'all',
 
         limit:
-          Math.min(
-            toPositiveInt(
-              options.limit,
-              50
-            ),
-            MAX_RESULTS
-          ),
+          options.limit ||
+          PROVIDER_LIMIT,
 
         extensions:
-          getEnabledExtensions()
+          enabledExtensions()
       }
     );
 
-  return bridgeResultArray(
-    result,
-    "results"
+  return bridgeArray(
+    data,
+    'results'
   )
     .map(
       normalizeBridgeResult
@@ -1846,35 +1658,28 @@ async function bridgeSearch(
 }
 
 async function bridgeHome(
-  options = {}
+  options
 ) {
-  const result =
+  const data =
     await bridgeRequest(
-      "home",
+      'home',
       {
         type:
-          safeString(
-            options.type,
-            "all"
-          ),
+          options.type ||
+          'all',
 
         limit:
-          Math.min(
-            toPositiveInt(
-              options.limit,
-              100
-            ),
-            MAX_RESULTS
-          ),
+          options.limit ||
+          PROVIDER_LIMIT,
 
         extensions:
-          getEnabledExtensions()
+          enabledExtensions()
       }
     );
 
-  return bridgeResultArray(
-    result,
-    "items"
+  return bridgeArray(
+    data,
+    'results'
   )
     .map(
       normalizeBridgeResult
@@ -1885,19 +1690,17 @@ async function bridgeHome(
 async function bridgeLoad(
   item
 ) {
-  const extension =
-    findExtension(
-      item.providerId
-    ) ||
-    findExtension(
-      item.providerName
-    );
-
-  return normalizeBridgeLoad(
+  const data =
     await bridgeRequest(
-      "load",
+      'load',
       {
-        extension,
+        extension:
+          findExtension(
+            item.providerId
+          ) ||
+          findExtension(
+            item.providerName
+          ),
 
         providerId:
           item.providerId,
@@ -1915,28 +1718,83 @@ async function bridgeLoad(
           item.sourceUrl ||
           null
       }
-    ),
-    item
-  );
+    );
+
+  const merged =
+    normalizeBridgeResult({
+      ...item,
+      ...data,
+
+      providerId:
+        data?.providerId ||
+        item.providerId,
+
+      providerName:
+        data?.providerName ||
+        item.providerName,
+
+      sourceId:
+        data?.sourceId ||
+        item.sourceId,
+
+      sourceUrl:
+        data?.sourceUrl ||
+        data?.url ||
+        item.sourceUrl,
+
+      raw:
+        data?.raw ||
+        data
+    });
+
+  if (
+    Array.isArray(
+      data?.episodes
+    )
+  ) {
+    merged.episodes =
+      data.episodes;
+  }
+
+  if (
+    Array.isArray(
+      data?.seasons
+    )
+  ) {
+    merged.seasons =
+      data.seasons;
+  }
+
+  if (
+    Array.isArray(
+      data?.sources
+    )
+  ) {
+    merged.sources =
+      normalizeSources(
+        data.sources,
+        merged
+      );
+  }
+
+  return merged;
 }
 
 async function bridgeSources(
   item,
   data
 ) {
-  const extension =
-    findExtension(
-      item.providerId
-    ) ||
-    findExtension(
-      item.providerName
-    );
-
-  return normalizeBridgeSources(
+  const result =
     await bridgeRequest(
-      "sources",
+      'sources',
       {
-        extension,
+        extension:
+          findExtension(
+            item.providerId
+          ) ||
+          findExtension(
+            item.providerName
+          ),
 
         providerId:
           item.providerId,
@@ -1955,645 +1813,362 @@ async function bridgeSources(
           null,
 
         data:
-          safeString(data) ||
-          null
+          data || null
       }
+    );
+
+  return normalizeSources(
+    bridgeArray(
+      result,
+      'sources'
     ),
     item
   );
 }
 
-/* ============================================================
-   CLOUDSTREAM RESULT NORMALIZATION
-============================================================ */
-
-function normalizeBridgeResult(
-  result
-) {
-  if (
-    !result ||
-    typeof result !==
-      "object"
-  ) {
-    return null;
-  }
-
-  const providerObject =
-    result.provider &&
-    typeof result.provider ===
-      "object"
-      ? result.provider
-      : null;
-
-  const providerName =
-    safeString(
-      result.providerName,
-
-      safeString(
-        providerObject?.name,
-
-        typeof result.provider ===
-        "string"
-          ? result.provider
-          : "CloudStream"
-      )
-    );
-
-  const providerId =
-    safeString(
-      result.providerId,
-
-      safeString(
-        providerObject?.id,
-        providerName
-      )
-    );
-
-  return normalizeMediaItem({
-    ...result,
-
-    providerId,
-
-    providerName,
-
-    sourceUrl:
-      result.sourceUrl ||
-      result.url ||
-      result.link,
-
-    sourceId:
-      safeString(
-        result.sourceId,
-        safeString(
-          result.url,
-          safeString(
-            result.id
-          )
-        )
-      ),
-
-    raw:
-      result.raw ||
-      result
-  });
-}
-
-/* ============================================================
-   CLOUDSTREAM LOAD NORMALIZATION
-============================================================ */
-
-function normalizeBridgeLoad(
-  result,
-  originalItem
-) {
-  const merged =
-    result &&
-    typeof result ===
-      "object"
-      ? {
-          ...originalItem,
-          ...result,
-
-          providerId:
-            result.providerId ||
-            originalItem.providerId,
-
-          providerName:
-            result.providerName ||
-            originalItem.providerName,
-
-          sourceId:
-            result.sourceId ||
-            originalItem.sourceId,
-
-          sourceUrl:
-            result.sourceUrl ||
-            result.url ||
-            originalItem.sourceUrl,
-
-          data:
-            result.data ||
-            originalItem.data ||
-            null,
-
-          raw:
-            result.raw ||
-            result
-        }
-      : originalItem;
-
-  const item =
-    normalizeBridgeResult(
-      merged
-    );
-
-  if (
-    Array.isArray(
-      result?.sources
-    )
-  ) {
-    item.sources =
-      normalizeSources(
-        result.sources,
-        item
-      );
-  }
-
-  if (
-    Array.isArray(
-      result?.episodes
-    )
-  ) {
-    item.episodes =
-      result.episodes
-        .map(
-          normalizeEpisode
-        )
-        .filter(Boolean);
-  }
-
-  if (
-    Array.isArray(
-      result?.seasons
-    )
-  ) {
-    item.seasons =
-      result.seasons;
-  }
-
-  return item;
-}
-
-function normalizeEpisode(
-  episode
-) {
-  if (
-    !episode ||
-    typeof episode !==
-      "object"
-  ) {
-    return null;
-  }
-
-  return {
-    ...episode,
-
-    data:
-      safeString(
-        episode.data
-      ) ||
-      null,
-
-    season:
-      episode.season ??
-      null,
-
-    episode:
-      episode.episode ??
-      null,
-
-    name:
-      safeString(
-        episode.name,
-        safeString(
-          episode.title,
-          "Episode"
-        )
-      ),
-
-    poster:
-      normalizeUrl(
-        episode.poster ||
-        episode.posterUrl
-      )
-  };
-}
-
-/* ============================================================
-   SOURCE NORMALIZATION
-============================================================ */
-
-function sourceToSource(
-  value,
-  parent
-) {
-  const url =
-    normalizeUrl(
-      value
-    );
-
-  if (!url) {
-    return null;
-  }
-
-  const isM3u8 =
-    /\.m3u8(?:$|\?)/i.test(
-      url
-    );
-
-  const isDash =
-    /\.mpd(?:$|\?)/i.test(
-      url
-    );
-
-  return {
-    id:
-      hash(url),
-
-    title:
-      value,
-
-    url,
-
-    format:
-      isM3u8
-        ? "hls"
-        : isDash
-          ? "dash"
-          : "",
-
-    mime:
-      mimeForFormat(
-        isM3u8
-          ? "hls"
-          : isDash
-            ? "dash"
-            : ""
-      ),
-
-    quality:
-      extractQuality(
-        value
-      ),
-
-    providerId:
-      parent.providerId,
-
-    providerName:
-      parent.providerName,
-
-    isM3u8,
-
-    isDash
-  };
-}
-
-function normalizeSources(
-  sources,
-  parent
-) {
-  return uniqueBy(
-    (
-      Array.isArray(sources)
-        ? sources
-        : []
-    )
-      .map(
-        source => {
-          if (
-            typeof source ===
-            "string"
-          ) {
-            return sourceToSource(
-              source,
-              parent
-            );
-          }
-
-          if (
-            !source ||
-            typeof source !==
-              "object"
-          ) {
-            return null;
-          }
-
-          const url =
-            normalizeUrl(
-              source.url ||
-              source.link
-            );
-
-          if (!url) {
-            return null;
-          }
-
-          let format =
-            safeString(
-              source.format
-            ).toLowerCase();
-
-          if (!format) {
-            format =
-              safeString(
-                source.type
-              ).toLowerCase();
-          }
-
-          if (
-            !format &&
-            /\.m3u8(?:$|\?)/i.test(
-              url
-            )
-          ) {
-            format =
-              "hls";
-          } else if (
-            !format &&
-            /\.mpd(?:$|\?)/i.test(
-              url
-            )
-          ) {
-            format =
-              "dash";
-          }
-
-          return {
-            id:
-              safeString(
-                source.id,
-                hash(url)
-              ),
-
-            title:
-              safeString(
-                source.title,
-                safeString(
-                  source.name,
-                  "Source"
-                )
-              ),
-
-            url,
-
-            format,
-
-            mime:
-              source.mime ||
-              mimeForFormat(
-                format
-              ),
-
-            quality:
-              safeString(
-                source.quality,
-                extractQuality(
-                  source.title ||
-                  source.name ||
-                  url
-                )
-              ),
-
-            headers:
-              source.headers &&
-              typeof source.headers ===
-                "object"
-                ? source.headers
-                : undefined,
-
-            referer:
-              safeString(
-                source.referer
-              ) ||
-              undefined,
-
-            subtitles:
-              Array.isArray(
-                source.subtitles
-              )
-                ? source.subtitles
-                : [],
-
-            isM3u8:
-              /\.m3u8(?:$|\?)/i.test(
-                url
-              ),
-
-            isDash:
-              /\.mpd(?:$|\?)/i.test(
-                url
-              ),
-
-            providerId:
-              parent.providerId,
-
-            providerName:
-              parent.providerName,
-
-            raw:
-              source
-          };
-        }
-      )
-      .filter(Boolean),
-
-    source =>
-      source.url
-  );
-}
-
-function normalizeBridgeSources(
-  result,
-  parent
-) {
-  return normalizeSources(
-    bridgeResultArray(
-      result,
-      "sources"
-    ),
-    parent
-  );
-}
-
-/* ============================================================
-   GLOBAL SEARCH
-============================================================ */
-
-async function searchProvider(
-  provider,
+async function searchAll(
   query,
   options
 ) {
-  try {
-    if (
-      typeof provider.search !==
-      "function"
-    ) {
-      return [];
-    }
-
-    const result =
-      await provider.search(
-        query,
-        options
-      );
-
-    return Array.isArray(
-      result
+  const tasks = [
+    ...nativeProviders.values()
+  ]
+    .filter(
+      provider =>
+        typeof provider.search ===
+        'function'
     )
-      ? result
-          .map(
-            normalizeMediaItem
-          )
-          .filter(Boolean)
-      : [];
-  } catch (
-    error
-  ) {
-    console.error(
-      `[Provider:${provider.id}] Search: ${error.message}`
-    );
-
-    return [];
-  }
-}
-
-async function searchAllProviders(
-  query,
-  options = {}
-) {
-  const tasks =
-    [
-      ...providers.values()
-    ]
-      .filter(
-        provider =>
-          typeof provider.search ===
-          "function"
-      )
-      .map(
-        provider =>
-          searchProvider(
-            provider,
+    .map(
+      provider =>
+        provider
+          .search(
             query,
             options
           )
-      );
+          .catch(
+            () => []
+          )
+    );
 
   if (BRIDGE_URL) {
     tasks.push(
       bridgeSearch(
         query,
         options
-      ).catch(
-        error => {
-          console.error(
-            `[CloudStream Search] ${error.message}`
-          );
+      ).catch(error => {
+        console.error(
+          `[bridge search] ${error.message}`
+        );
 
-          return [];
-        }
-      )
+        return [];
+      })
     );
   }
 
   const results =
-    await Promise.all(
-      tasks
-    );
+    (
+      await Promise.all(
+        tasks
+      )
+    )
+      .flat()
+      .map(
+        normalizeItem
+      );
 
   return uniqueBy(
-    results
-      .flat()
-      .filter(Boolean),
-
+    results,
     item =>
-      `${normalizeExtensionName(
+      `${normalizeName(
         item.providerId
-      )}:${slug(
+      )}:${item.sourceId || item.id}:${normalizeName(
         item.title
-      )}:${item.sourceId || item.id}`
+      )}`
+  ).slice(
+    0,
+    options.limit ||
+      SEARCH_LIMIT
   );
 }
 
-/* ============================================================
-   HOME
-============================================================ */
-
-async function homeAllProviders(
-  options = {}
+async function homeAll(
+  options
 ) {
-  const tasks =
-    [
-      ...providers.values()
-    ]
-      .filter(
-        provider =>
-          typeof provider.home ===
-          "function"
-      )
-      .map(
-        async provider => {
-          try {
-            const result =
-              await provider.home(
-                options
-              );
-
-            return Array.isArray(
-              result
-            )
-              ? result
-                  .map(
-                    normalizeMediaItem
-                  )
-                  .filter(Boolean)
-              : [];
-          } catch (
-            error
-          ) {
-            console.error(
-              `[Provider:${provider.id}] Home: ${error.message}`
-            );
-
-            return [];
-          }
-        }
-      );
+  const tasks = [
+    ...nativeProviders.values()
+  ]
+    .filter(
+      provider =>
+        typeof provider.home ===
+        'function'
+    )
+    .map(
+      provider =>
+        provider
+          .home(options)
+          .catch(
+            () => []
+          )
+    );
 
   if (BRIDGE_URL) {
     tasks.push(
       bridgeHome(
         options
-      ).catch(
-        error => {
-          console.error(
-            `[CloudStream Home] ${error.message}`
-          );
+      ).catch(error => {
+        console.error(
+          `[bridge home] ${error.message}`
+        );
 
-          return [];
-        }
-      )
+        return [];
+      })
     );
   }
 
   const results =
-    await Promise.all(
-      tasks
-    );
+    (
+      await Promise.all(
+        tasks
+      )
+    )
+      .flat()
+      .map(
+        normalizeItem
+      );
 
   return uniqueBy(
-    results
-      .flat()
-      .filter(Boolean),
-
+    results,
     item =>
-      `${normalizeExtensionName(
+      `${normalizeName(
         item.providerId
       )}:${item.sourceId || item.id}`
+  ).slice(
+    0,
+    options.limit ||
+      SEARCH_LIMIT
   );
 }
 
-/* ============================================================
-   PROVIDERS API
-============================================================ */
+function typeMatches(
+  item,
+  type
+) {
+  type =
+    text(
+      type,
+      'all'
+    ).toLowerCase();
+
+  if (
+    type === 'all'
+  ) {
+    return true;
+  }
+
+  const itemType =
+    text(
+      item.type
+    ).toLowerCase();
+
+  if (
+    type === 'movie'
+  ) {
+    return [
+      'movie',
+      'movies'
+    ].includes(
+      itemType
+    );
+  }
+
+  if (
+    type === 'series'
+  ) {
+    return [
+      'tvseries',
+      'tv-series',
+      'tv series',
+      'series',
+      'show'
+    ].includes(
+      itemType
+    );
+  }
+
+  if (
+    type === 'anime'
+  ) {
+    return (
+      itemType ===
+      'anime'
+    );
+  }
+
+  return ![
+    'movie',
+    'movies',
+    'tvseries',
+    'tv-series',
+    'tv series',
+    'series',
+    'show',
+    'anime'
+  ].includes(
+    itemType
+  );
+}
+
+function findItem(id) {
+  return (
+    library.find(
+      item =>
+        item.id === id
+    ) ||
+    null
+  );
+}
+
+function json(
+  response,
+  value,
+  status = 200
+) {
+  response
+    .status(status)
+    .json(value);
+}
+
+app.disable(
+  'x-powered-by'
+);
+
+app.use(
+  cors({
+    origin:
+      process.env.CORS_ORIGIN &&
+      process.env.CORS_ORIGIN !== '*'
+        ? process.env.CORS_ORIGIN
+            .split(',')
+            .map(
+              value =>
+                value.trim()
+            )
+        : true
+  })
+);
+
+app.use(
+  express.json({
+    limit: '2mb',
+    strict: true
+  })
+);
+
+app.use(
+  express.static(
+    path.join(
+      __dirname,
+      'public'
+    )
+  )
+);
 
 app.get(
-  "/api/providers",
+  '/health',
+  (req, res) =>
+    json(
+      res,
+      {
+        ok: true,
+        service:
+          'Mediav2',
+        bridge:
+          Boolean(
+            BRIDGE_URL
+          ),
+        providers:
+          nativeProviders.size,
+        timestamp:
+          now()
+      }
+    )
+);
+
+app.get(
+  '/api/health',
+  (req, res) =>
+    json(
+      res,
+      {
+        ok: true,
+
+        service:
+          'Mediav2',
+
+        version:
+          '2.1.0',
+
+        uptime:
+          process.uptime(),
+
+        bridge: {
+          configured:
+            Boolean(
+              BRIDGE_URL
+            ),
+
+          url:
+            BRIDGE_URL ||
+            null,
+
+          timeoutMs:
+            BRIDGE_TIMEOUT
+        },
+
+        extensions: {
+          discovered:
+            extensionState
+              .extensions
+              .length,
+
+          enabled:
+            enabledExtensions()
+              .length,
+
+          enabledNames:
+            enabledExtensions()
+              .map(
+                extension =>
+                  extension.name
+              ),
+
+          updatedAt:
+            extensionState
+              .updatedAt
+        },
+
+        providers:
+          [
+            ...nativeProviders
+              .keys()
+          ],
+
+        library:
+          library.length,
+
+        timestamp:
+          now()
+      }
+    )
+);
+
+app.get(
+  '/api/providers',
   (req, res) => {
-    const result =
+    const providers =
       [
-        ...providers.values()
+        ...nativeProviders
+          .values()
       ].map(
         provider => ({
           id:
@@ -2604,25 +2179,22 @@ app.get(
 
           type:
             provider.type ||
-            "provider",
+            'provider',
 
           cloudstream:
             false,
 
           playable:
-            typeof provider.sources ===
-              "function" ||
-            typeof provider.load ===
-              "function"
+            true
         })
       );
 
     if (BRIDGE_URL) {
       for (
         const extension of
-          getEnabledExtensions()
+          enabledExtensions()
       ) {
-        result.push({
+        providers.push({
           id:
             extension.id,
 
@@ -2630,10 +2202,11 @@ app.get(
             extension.name,
 
           internalName:
-            extension.internalName,
+            extension
+              .internalName,
 
           type:
-            "cloudstream",
+            'cloudstream',
 
           cloudstream:
             true,
@@ -2646,366 +2219,277 @@ app.get(
       }
     }
 
-    res.json({
-      ok:
-        true,
-
-      providers:
-        result
-    });
+    json(
+      res,
+      {
+        ok: true,
+        providers
+      }
+    );
   }
 );
-
-/* ============================================================
-   EXTENSIONS API
-============================================================ */
 
 app.get(
-  "/api/extensions",
-  (req, res) => {
-    const enabled =
-      new Set(
-        getEnabledExtensions()
-          .map(
-            extension =>
-              extension.id
-          )
-      );
-
-    const extensions =
-      Array.isArray(
-        extensionState.extensions
-      )
-        ? extensionState.extensions
-        : [];
-
-    res.json({
-      ok:
-        true,
-
-      updatedAt:
-        extensionState.updatedAt,
-
-      repositories:
-        extensionState.repositories,
-
-      count:
-        extensions.length,
-
-      enabledCount:
-        enabled.size,
-
-      bridgeConfigured:
-        Boolean(BRIDGE_URL),
-
-      bridgeUrl:
-        BRIDGE_URL ||
-        null,
-
-      extensions:
-        extensions.map(
-          extension => ({
-            ...extension,
-
-            enabled:
-              enabled.has(
-                extension.id
-              ),
-
-            pluginUrl:
-              extension.pluginUrl ||
-              extension.url
-          })
-        )
-    });
-  }
-);
-
-/* ============================================================
-   EXTENSION SYNC
-============================================================ */
-
-app.post(
-  "/api/extensions/sync",
-  async (req, res) => {
-    try {
-      const state =
-        await syncExtensions();
-
-      res.json({
-        ok:
-          true,
+  '/api/extensions',
+  (req, res) =>
+    json(
+      res,
+      {
+        ok: true,
 
         updatedAt:
-          state.updatedAt,
+          extensionState
+            .updatedAt,
 
         repositories:
-          state.repositories,
+          extensionState
+            .repositories,
+
+        count:
+          extensionState
+            .extensions
+            .length,
+
+        enabledCount:
+          enabledExtensions()
+            .length,
+
+        bridgeConfigured:
+          Boolean(
+            BRIDGE_URL
+          ),
 
         extensions:
-          state.extensions,
+          extensionState
+            .extensions
+            .map(
+              extension => ({
+                ...extension,
 
-        enabledExtensions:
-          state.enabledExtensions
-      });
-    } catch (
-      error
-    ) {
-      console.error(
-        "[Extensions Sync]",
-        error
+                enabled:
+                  enabledExtensions()
+                    .some(
+                      item =>
+                        item.id ===
+                        extension.id
+                    )
+              })
+            )
+      }
+    )
+);
+
+app.post(
+  '/api/extensions/sync',
+  async (req, res) => {
+    try {
+      json(
+        res,
+        {
+          ok: true,
+          ...(await syncExtensions())
+        }
       );
-
-      res.status(500).json({
-        ok:
-          false,
-
-        error:
-          error.message
-      });
+    } catch (error) {
+      json(
+        res,
+        {
+          ok: false,
+          error:
+            error.message
+        },
+        502
+      );
     }
   }
 );
 
-/* ============================================================
-   SEARCH API
-============================================================ */
-
 app.get(
-  "/api/search",
+  '/api/search',
   async (req, res) => {
     const query =
-      safeString(
+      text(
         req.query.q
       );
 
     if (!query) {
-      return res.status(400).json({
-        ok:
-          false,
-
-        error:
-          "Query is required"
-      });
+      return json(
+        res,
+        {
+          ok: false,
+          error:
+            'Query is required'
+        },
+        400
+      );
     }
 
     try {
-      const results =
-        await searchAllProviders(
-          query,
-          {
-            type:
-              safeString(
-                req.query.type,
-                "all"
-              ),
+      const type =
+        text(
+          req.query.type,
+          'all'
+        ).toLowerCase();
 
-            limit:
-              Math.min(
-                toPositiveInt(
-                  req.query.limit,
-                  50
+      const limit =
+        Math.min(
+          Math.max(
+            Number(
+              req.query.limit
+            ) ||
+              SEARCH_LIMIT,
+            1
+          ),
+          SEARCH_LIMIT
+        );
+
+      const results =
+        (
+          await searchAll(
+            query,
+            {
+              type,
+              limit:
+                Math.min(
+                  PROVIDER_LIMIT,
+                  limit
                 ),
-                MAX_RESULTS
-              )
-          }
+
+              providerLimit:
+                PROVIDER_LIMIT
+            }
+          )
+        ).filter(
+          item =>
+            typeMatches(
+              item,
+              type
+            )
         );
 
       mergeIntoLibrary(
         results
       );
 
-      res.json({
-        ok:
-          true,
+      json(
+        res,
+        {
+          ok: true,
 
-        query,
+          query,
 
-        count:
-          results.length,
+          count:
+            results.length,
 
-        providers:
-          [
-            ...new Set(
-              results.map(
-                item =>
-                  item.providerName
+          providers:
+            [
+              ...new Set(
+                results.map(
+                  item =>
+                    item.providerName
+                )
               )
-            )
-          ],
+            ],
 
-        results
-      });
-    } catch (
-      error
-    ) {
-      console.error(
-        "[Search]",
-        error
+          results
+        }
       );
-
-      res.status(502).json({
-        ok:
-          false,
-
-        error:
-          error.message
-      });
+    } catch (error) {
+      json(
+        res,
+        {
+          ok: false,
+          error:
+            error.message
+        },
+        502
+      );
     }
   }
 );
 
-/* ============================================================
-   LIBRARY API
-============================================================ */
-
 app.get(
-  "/api/library",
+  '/api/library',
   async (req, res) => {
     const refresh =
-      req.query.refresh ===
-      "true";
+      text(
+        req.query.refresh
+      ).toLowerCase() ===
+      'true';
 
     if (
-      refresh ||
-      mediaLibrary.length === 0
+      (
+        refresh ||
+        library.length === 0
+      ) &&
+      !req.query.skipRefresh
     ) {
       try {
-        const home =
-          await homeAllProviders({
-            limit:
-              MAX_RESULTS
-          });
-
         mergeIntoLibrary(
-          home
+          await homeAll({
+            limit:
+              SEARCH_LIMIT
+          })
         );
-      } catch (
-        error
-      ) {
+      } catch (error) {
         console.error(
-          `[Library] ${error.message}`
+          `[library] ${error.message}`
         );
       }
     }
 
     const type =
-      safeString(
+      text(
         req.query.type,
-        "all"
+        text(
+          req.query.category,
+          'all'
+        )
       ).toLowerCase();
 
     const results =
-      type === "all"
-        ? mediaLibrary
-        : mediaLibrary.filter(
-            item =>
-              item.type ===
-              type
-          );
-
-    res.json({
-      ok:
-        true,
-
-      count:
-        results.length,
-
-      updatedAt:
-        extensionState.updatedAt,
-
-      results
-    });
-  }
-);
-
-/* ============================================================
-   FULL SYNC
-============================================================ */
-
-app.post(
-  "/api/sync",
-  async (req, res) => {
-    try {
-      const state =
-        await syncExtensions();
-
-      const home =
-        await homeAllProviders({
-          limit:
-            MAX_RESULTS
-        });
-
-      mergeIntoLibrary(
-        home
+      library.filter(
+        item =>
+          typeMatches(
+            item,
+            type
+          )
       );
 
-      res.json({
-        ok:
-          true,
+    json(
+      res,
+      {
+        ok: true,
 
-        extensions:
-          state.extensions.length,
-
-        enabledExtensions:
-          state.enabledExtensions.length,
-
-        library:
-          mediaLibrary.length,
+        count:
+          results.length,
 
         updatedAt:
-          now()
-      });
-    } catch (
-      error
-    ) {
-      console.error(
-        "[Sync]",
-        error
-      );
+          extensionState
+            .updatedAt,
 
-      res.status(502).json({
-        ok:
-          false,
+        results,
 
-        error:
-          error.message
-      });
-    }
+        library:
+          results
+      }
+    );
   }
 );
-
-/* ============================================================
-   TITLE
-============================================================ */
-
-function findLibraryItem(
-  id
-) {
-  return (
-    mediaLibrary.find(
-      item =>
-        item.id ===
-        id
-    ) ||
-    null
-  );
-}
 
 async function loadItem(
   item
 ) {
-  const cloudstreamExtension =
-    findExtension(
-      item.providerId
-    ) ||
-    findExtension(
-      item.providerName
-    );
-
   if (
     BRIDGE_URL &&
-    cloudstreamExtension
+    (
+      findExtension(
+        item.providerId
+      ) ||
+      findExtension(
+        item.providerName
+      )
+    )
   ) {
     return bridgeLoad(
       item
@@ -3013,16 +2497,14 @@ async function loadItem(
   }
 
   const provider =
-    providers.get(
+    nativeProviders.get(
       item.providerId
     );
 
   if (
-    provider &&
-    typeof provider.load ===
-      "function"
+    provider?.load
   ) {
-    return normalizeMediaItem(
+    return normalizeItem(
       await provider.load(
         item
       )
@@ -3033,23 +2515,25 @@ async function loadItem(
 }
 
 app.get(
-  "/api/title/:id",
+  '/api/title/:id',
   async (req, res) => {
     const item =
-      findLibraryItem(
-        safeString(
+      findItem(
+        text(
           req.params.id
         )
       );
 
     if (!item) {
-      return res.status(404).json({
-        ok:
-          false,
-
-        error:
-          "Title not found"
-      });
+      return json(
+        res,
+        {
+          ok: false,
+          error:
+            'Title not found'
+        },
+        404
+      );
     }
 
     try {
@@ -3062,67 +2546,60 @@ app.get(
         loaded
       ]);
 
-      res.json({
-        ok:
-          true,
-
-        item:
-          loaded
-      });
-    } catch (
-      error
-    ) {
-      console.error(
-        `[Title] ${error.message}`
+      json(
+        res,
+        {
+          ok: true,
+          item: loaded
+        }
       );
-
-      res.status(502).json({
-        ok:
-          false,
-
-        error:
-          error.message
-      });
+    } catch (error) {
+      json(
+        res,
+        {
+          ok: false,
+          error:
+            error.message
+        },
+        502
+      );
     }
   }
 );
 
-/* ============================================================
-   SOURCES
-============================================================ */
-
 app.get(
-  "/api/sources/:id",
+  '/api/sources/:id',
   async (req, res) => {
     const item =
-      findLibraryItem(
-        safeString(
+      findItem(
+        text(
           req.params.id
         )
       );
 
     if (!item) {
-      return res.status(404).json({
-        ok:
-          false,
-
-        error:
-          "Title not found"
-      });
+      return json(
+        res,
+        {
+          ok: false,
+          error:
+            'Title not found'
+        },
+        404
+      );
     }
 
     try {
-      const cloudstreamExtension =
-        findExtension(
-          item.providerId
-        ) ||
-        findExtension(
-          item.providerName
-        );
-
       if (
         BRIDGE_URL &&
-        cloudstreamExtension
+        (
+          findExtension(
+            item.providerId
+          ) ||
+          findExtension(
+            item.providerName
+          )
+        )
       ) {
         const loaded =
           await bridgeLoad(
@@ -3130,17 +2607,14 @@ app.get(
           );
 
         let data =
-          safeString(
-            req.query.data
-          ) ||
-          safeString(
-            loaded?.data
+          text(
+            req.query.data,
+            text(
+              loaded?.data,
+              item.data
+            )
           );
 
-        /*
-         * TV/anime data is normally stored
-         * on the selected episode.
-         */
         if (
           !data &&
           Array.isArray(
@@ -3158,261 +2632,211 @@ app.get(
               req.query.episode
             );
 
-          let selected =
+          const chosen =
+            loaded.episodes.find(
+              itemEpisode =>
+                (
+                  !Number.isFinite(
+                    season
+                  ) ||
+                  Number(
+                    itemEpisode?.season
+                  ) === season
+                ) &&
+                (
+                  !Number.isFinite(
+                    episode
+                  ) ||
+                  Number(
+                    itemEpisode?.episode
+                  ) === episode
+                )
+            ) ||
             loaded.episodes[0];
 
-          if (
-            Number.isFinite(
-              season
-            ) &&
-            Number.isFinite(
-              episode
-            )
-          ) {
-            selected =
-              loaded.episodes.find(
-                entry =>
-                  Number(
-                    entry?.season
-                  ) === season &&
-                  Number(
-                    entry?.episode
-                  ) === episode
-              ) ||
-              selected;
-          }
-
           data =
-            safeString(
-              selected?.data
-            );
-        }
-
-        if (!data) {
-          data =
-            safeString(
-              item.data
+            text(
+              chosen?.data
             );
         }
 
         if (!data) {
           throw new Error(
-            "CloudStream LoadResponse data is missing"
+            'CloudStream LoadResponse data is missing'
           );
         }
 
         const sources =
           await bridgeSources(
-            loaded ||
-              item,
+            loaded || item,
             data
           );
 
-        if (!sources.length) {
-          throw new Error(
-            "CloudStream returned no playable sources"
-          );
-        }
+        return json(
+          res,
+          {
+            ok: true,
 
-        return res.json({
-          ok:
-            true,
+            provider:
+              loaded.providerName ||
+              item.providerName,
 
-          provider:
-            loaded.providerName ||
-            item.providerName,
-
-          sources
-        });
+            sources
+          }
+        );
       }
 
-      /*
-       * Native provider fallback.
-       */
       const provider =
-        providers.get(
+        nativeProviders.get(
           item.providerId
         );
 
       if (
-        provider &&
-        typeof provider.sources ===
-          "function"
+        provider?.sources
       ) {
-        const sources =
-          await provider.sources(
-            item
-          );
+        return json(
+          res,
+          {
+            ok: true,
 
-        return res.json({
-          ok:
-            true,
+            provider:
+              provider.name,
 
-          provider:
-            provider.name,
-
-          sources:
-            normalizeSources(
-              sources,
-              item
-            )
-        });
+            sources:
+              normalizeSources(
+                await provider.sources(
+                  item
+                ),
+                item
+              )
+          }
+        );
       }
 
       if (
-        provider &&
-        typeof provider.load ===
-          "function"
+        provider?.load
       ) {
         const loaded =
           await provider.load(
             item
           );
 
-        return res.json({
-          ok:
-            true,
+        return json(
+          res,
+          {
+            ok: true,
+
+            provider:
+              provider.name,
+
+            sources:
+              normalizeSources(
+                loaded?.sources ||
+                  [],
+                item
+              )
+          }
+        );
+      }
+
+      return json(
+        res,
+        {
+          ok: true,
 
           provider:
-            provider.name,
+            item.providerName,
 
           sources:
             normalizeSources(
-              loaded?.sources,
+              item.sources ||
+                [],
               item
             )
-        });
-      }
-
-      return res.json({
-        ok:
-          true,
-
-        provider:
-          item.providerName,
-
-        sources:
-          []
-      });
-    } catch (
-      error
-    ) {
-      console.error(
-        `[Sources] ${error.message}`
+        }
       );
+    } catch (error) {
+      json(
+        res,
+        {
+          ok: false,
 
-      res.status(502).json({
-        ok:
-          false,
+          error:
+            error.message,
 
-        error:
-          error.message,
+          provider:
+            item.providerName,
 
-        provider:
-          item.providerName,
-
-        sourceId:
-          item.sourceId
-      });
+          sourceId:
+            item.sourceId
+        },
+        502
+      );
     }
   }
 );
 
-/* ============================================================
-   HEALTH
-============================================================ */
+app.post(
+  '/api/sync',
+  async (req, res) => {
+    try {
+      const extensions =
+        await syncExtensions();
 
-app.get(
-  "/api/health",
-  (req, res) => {
-    const extensions =
-      Array.isArray(
-        extensionState.extensions
-      )
-        ? extensionState.extensions
-        : [];
+      mergeIntoLibrary(
+        await homeAll({
+          limit:
+            SEARCH_LIMIT
+        })
+      );
 
-    const enabled =
-      getEnabledExtensions();
+      json(
+        res,
+        {
+          ok: true,
 
-    res.json({
-      ok:
-        true,
+          extensions:
+            extensions
+              .extensions
+              .length,
 
-      service:
-        "Mediav2",
+          enabledExtensions:
+            extensions
+              .enabledExtensions
+              .length,
 
-      version:
-        "2.0.0",
+          library:
+            library.length,
 
-      uptime:
-        process.uptime(),
-
-      bridge: {
-        configured:
-          Boolean(
-            BRIDGE_URL
-          ),
-
-        url:
-          BRIDGE_URL ||
-          null,
-
-        timeoutMs:
-          BRIDGE_TIMEOUT_MS
-      },
-
-      extensions: {
-        discovered:
-          extensions.length,
-
-        enabled:
-          enabled.length,
-
-        enabledNames:
-          enabled.map(
-            extension =>
-              extension.name
-          ),
-
-        updatedAt:
-          extensionState.updatedAt
-      },
-
-      providers:
-        [
-          ...providers.keys()
-        ],
-
-      library:
-        mediaLibrary.length,
-
-      timestamp:
-        now()
-    });
+          updatedAt:
+            now()
+        }
+      );
+    } catch (error) {
+      json(
+        res,
+        {
+          ok: false,
+          error:
+            error.message
+        },
+        502
+      );
+    }
   }
 );
 
-/* ============================================================
-   ROOT
-============================================================ */
-
 app.get(
-  "/",
-  (req, res) => {
+  '/',
+  (req, res) =>
     res.sendFile(
       path.join(
         __dirname,
-        "public",
-        "index.html"
+        'public',
+        'index.html'
       )
-    );
-  }
+    )
 );
-
-/* ============================================================
-   ERROR HANDLER
-============================================================ */
 
 app.use(
   (
@@ -3422,254 +2846,166 @@ app.use(
     next
   ) => {
     console.error(
-      `[HTTP] ${error.message}`
+      `[http] ${error.message}`
     );
 
     if (
       res.headersSent
     ) {
-      return next(
-        error
-      );
+      return next(error);
     }
 
-    res.status(400).json({
-      ok:
-        false,
-
-      error:
-        error.message ||
-        "Bad request"
-    });
+    json(
+      res,
+      {
+        ok: false,
+        error:
+          error.message ||
+          'Bad request'
+      },
+      400
+    );
   }
 );
-
-/* ============================================================
-   404
-============================================================ */
 
 app.use(
-  (req, res) => {
-    if (
-      req.path.startsWith(
-        "/api/"
-      )
-    ) {
-      return res.status(404).json({
-        ok:
-          false,
-
+  (req, res) =>
+    json(
+      res,
+      {
+        ok: false,
         error:
-          "API endpoint not found"
-      });
-    }
-
-    res.status(404).send(
-      "Mediav2: page not found"
-    );
-  }
+          'Not found'
+      },
+      404
+    )
 );
 
-/* ============================================================
-   STARTUP
-============================================================ */
+let lastSync = 0;
 
-let lastExtensionSync =
-  0;
-
-async function ensureExtensionSync() {
-  await syncExtensions();
-
-  lastExtensionSync =
-    Date.now();
-
-  return extensionState;
-}
-
-async function refreshLibrary() {
+async function startup() {
   try {
-    const home =
-      await homeAllProviders({
-        limit:
-          MAX_RESULTS
-      });
+    await syncExtensions();
+
+    lastSync =
+      Date.now();
 
     mergeIntoLibrary(
-      home
-    );
-  } catch (
-    error
-  ) {
-    console.error(
-      `[Library Refresh] ${error.message}`
-    );
-  }
-}
-
-async function startupSync() {
-  console.log(
-    "=============================================="
-  );
-
-  console.log(
-    `[Startup] Mediav2 on port ${PORT}`
-  );
-
-  console.log(
-    `[Startup] CloudStream bridge: ${
-      BRIDGE_URL ||
-      "disabled"
-    }`
-  );
-
-  try {
-    await ensureExtensionSync();
-
-    await refreshLibrary();
-
-    console.log(
-      `[Startup] Library: ${mediaLibrary.length} items`
+      await homeAll({
+        limit:
+          SEARCH_LIMIT
+      })
     );
 
     console.log(
-      `[Startup] Enabled CloudStream extensions: ${
-        getEnabledExtensions()
-          .map(
-            extension =>
-              extension.name
-          )
-          .join(", ") ||
-        "none"
-      }`
+      `Mediav2 ready: ${library.length} titles, ${enabledExtensions().length} enabled extensions`
     );
-  } catch (
-    error
-  ) {
+  } catch (error) {
     console.error(
-      `[Startup] ${error.message}`
+      `[startup] ${error.message}`
     );
   }
-
-  console.log(
-    "=============================================="
-  );
 }
-
-/* ============================================================
-   SCHEDULED SYNC
-============================================================ */
 
 setInterval(
   async () => {
     const interval =
-      EXTENSION_SYNC_HOURS *
-      60 *
-      60 *
-      1000;
+      Math.max(
+        Number(
+          process.env
+            .CLOUDSTREAM_SYNC_INTERVAL
+        ) ||
+          21600000,
+        300000
+      );
 
     if (
       Date.now() -
-        lastExtensionSync <
+        lastSync <
       interval
     ) {
       return;
     }
 
     try {
-      console.log(
-        "[Scheduled Sync] Starting..."
+      await syncExtensions();
+
+      lastSync =
+        Date.now();
+
+      mergeIntoLibrary(
+        await homeAll({
+          limit:
+            SEARCH_LIMIT
+        })
       );
-
-      await ensureExtensionSync();
-
-      await refreshLibrary();
-
-      console.log(
-        "[Scheduled Sync] Complete."
-      );
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.error(
-        `[Scheduled Sync] ${error.message}`
+        `[scheduled sync] ${error.message}`
       );
     }
   },
-  15 * 60 * 1000
+  300000
 ).unref();
-
-/* ============================================================
-   SERVER
-============================================================ */
 
 const server =
   app.listen(
     PORT,
+    '0.0.0.0',
     () => {
       console.log(
-        `Mediav2 listening on port ${PORT}`
+        `Mediav2 listening on ${PORT}`
       );
 
-      startupSync();
+      void startup();
     }
   );
-
-/* ============================================================
-   SHUTDOWN
-============================================================ */
 
 function shutdown(
   signal
 ) {
   console.log(
-    `[Process] ${signal} received`
+    `${signal} received`
   );
 
   server.close(
-    () => {
-      process.exit(0);
-    }
+    () =>
+      process.exit(0)
   );
 
   setTimeout(
-    () => {
-      process.exit(1);
-    },
+    () =>
+      process.exit(1),
     10000
   ).unref();
 }
 
 process.on(
-  "SIGTERM",
+  'SIGTERM',
   () =>
-    shutdown(
-      "SIGTERM"
-    )
+    shutdown('SIGTERM')
 );
 
 process.on(
-  "SIGINT",
+  'SIGINT',
   () =>
-    shutdown(
-      "SIGINT"
-    )
+    shutdown('SIGINT')
 );
 
 process.on(
-  "unhandledRejection",
-  error => {
+  'unhandledRejection',
+  error =>
     console.error(
-      "[Process] Unhandled rejection:",
+      '[unhandledRejection]',
       error
-    );
-  }
+    )
 );
 
 process.on(
-  "uncaughtException",
+  'uncaughtException',
   error => {
     console.error(
-      "[Process] Uncaught exception:",
+      '[uncaughtException]',
       error
     );
 
