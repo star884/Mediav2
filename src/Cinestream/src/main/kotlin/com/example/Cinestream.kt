@@ -10,11 +10,11 @@ class Cinestream : MainProvider() {
     override var lang = "en"
     override var hasMainPage = true
 
-    override async fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+    override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val items = listOf(
             MovieSearchResponse(
-                name = "Sample Movie",
-                url = "$mainUrl/movie/sample",
+                name = "Sample Title",
+                url = "$mainUrl/watch/sample",
                 apiName = this.name,
                 type = TvType.Movie,
                 posterUrl = "https://via.placeholder.com/300x450"
@@ -23,15 +23,15 @@ class Cinestream : MainProvider() {
         return newHomePageResponse(request.name, items)
     }
 
-    override async fun search(query: String): List<SearchResponse> {
+    override suspend fun search(query: String): List<SearchResponse> {
         return emptyList()
     }
 
-    override async fun load(url: String): LoadResponse {
-        return newMovieLoadResponse("Sample Movie", url, TvType.Movie, "$url/play")
+    override suspend fun load(url: String): LoadResponse {
+        return newMovieLoadResponse("Sample Title", url, TvType.Movie, "$url/play")
     }
 
-    override async fun loadLinks(
+    override suspend fun loadLinks(
         data: String,
         isCdn: Boolean,
         subtitleCallback: (SubtitleFile) -> Unit,
@@ -40,7 +40,7 @@ class Cinestream : MainProvider() {
         callback(
             ExtractorLink(
                 source = this.name,
-                name = "Direct Stream",
+                name = "Stream",
                 url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
                 referer = "",
                 quality = Qualities.P1080.value
