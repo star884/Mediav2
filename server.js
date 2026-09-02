@@ -6,95 +6,57 @@ const crypto = require("crypto");
 
 const app = express();
 
-/* ============================================================
-   CONFIG
-============================================================ */
+const PORT = toPositiveInt(process.env.PORT, 3000);
 
-const PORT =
-  Number(process.env.PORT || 3000);
+const DATA_DIR = path.join(__dirname, "data");
+const CACHE_FILE = path.join(DATA_DIR, "cache.json");
+const EXTENSIONS_FILE = path.join(DATA_DIR, "extensions.json");
 
-const DATA_DIR =
-  path.join(__dirname, "data");
+const REQUEST_TIMEOUT_MS = toPositiveInt(
+  process.env.REQUEST_TIMEOUT_MS,
+  20000
+);
 
-const CACHE_FILE =
-  path.join(DATA_DIR, "cache.json");
+const BRIDGE_TIMEOUT_MS = toPositiveInt(
+  process.env.CLOUDSTREAM_BRIDGE_TIMEOUT_MS,
+  130000
+);
 
-const EXTENSIONS_FILE =
-  path.join(DATA_DIR, "extensions.json");
+const EXTENSION_SYNC_HOURS = toPositiveNumber(
+  process.env.EXTENSION_SYNC_HOURS,
+  6
+);
 
-const CACHE_TTL_MS =
-  Number(process.env.CACHE_TTL_HOURS || 6) *
-  60 *
-  60 *
-  1000;
-
-const REQUEST_TIMEOUT_MS =
-  Number(
-    process.env.REQUEST_TIMEOUT_MS || 20000
-  );
-
-const EXTENSION_SYNC_HOURS =
-  Number(
-    process.env.EXTENSION_SYNC_HOURS || 6
-  );
-
-/*
- * Mediav2 and the JVM CloudStream runtime run
- * inside the same container.
- *
- * The runtime listens on 10001 by default.
- */
-const BRIDGE_URL =
-  (
-    process.env.CLOUDSTREAM_BRIDGE_URL ||
+const BRIDGE_URL = normalizeBaseUrl(
+  process.env.CLOUDSTREAM_BRIDGE_URL ||
     "http://127.0.0.1:10001"
-  ).replace(/\/+$/, "");
-
-/*
- * CloudStream operations can legitimately take
- * considerably longer than normal HTTP requests.
- */
-const BRIDGE_TIMEOUT_MS =
-  Number(
-    process.env.CLOUDSTREAM_BRIDGE_TIMEOUT_MS ||
-    130000
-  );
+);
 
 const USER_AGENT =
   process.env.USER_AGENT ||
   "Mediav2/2.0 (+https://github.com/star884/Mediav2)";
 
-fs.mkdirSync(
-  DATA_DIR,
-  { recursive: true }
-);
-
-app.use(cors());
-
-app.use(
-  express.json({
-    limit: "2mb"
-  })
-);
-
-app.use(
-  express.static(
-    path.join(__dirname, "public")
-  )
-);
+const MAX_RESULTS = 100;
 
 /* ============================================================
    HELPERS
 ============================================================ */
 
+function toPositiveInt(value, fallback) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+function toPositiveNumber(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 function now() {
   return new Date().toISOString();
 }
 
-function safeString(
-  value,
-  fallback = ""
-) {
+function safeString(value, fallback = "") {
   return typeof value === "string"
     ? value.trim()
     : fallback;
@@ -116,39 +78,33 @@ function slug(value) {
     .slice(0, 120);
 }
 
-function uniqueBy(
-  items,
-  keyFn
-) {
-  const seen = new Set();
-  const result = [];
-
-  for (const item of items) {
-    const key = keyFn(item);
-
-    if (!key || seen.has(key)) {
-      continue;
-    }
-
-    seen.add(key);
-    result.push(item);
-  }
-
-  return result;
+function normalizeExtensionName(value) {
+  return safeString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
-function normalizeUrl(
-  value,
-  baseUrl = null
-) {
-  if (!value) {
+function normalizeBaseUrl(value) {
+  const url = normalizeUrl(value);
+
+  return url
+    ? url.replace(/\/+$/, "")
+    : "";
+}
+
+function normalizeUrl(value, baseUrl = null) {
+  if (
+    typeof value !== "string" ||
+    !value.trim()
+  ) {
     return null;
   }
 
   try {
-    const url = baseUrl
-      ? new URL(value, baseUrl)
-      : new URL(value);
+    const url = new URL(
+      value.trim(),
+      baseUrl || undefined
+    );
 
     if (
       url.protocol !== "http:" &&
@@ -163,10 +119,32 @@ function normalizeUrl(
   }
 }
 
-function readJson(
-  file,
-  fallback
-) {
+function uniqueBy(items, keyFn) {
+  const seen = new Set();
+  const result = [];
+
+  for (
+    const item of Array.isArray(items)
+      ? items
+      : []
+  ) {
+    const key = keyFn(item);
+
+    if (
+      !key ||
+      seen.has(key)
+    ) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(item);
+  }
+
+  return result;
+}
+
+function readJson(file, fallback) {
   try {
     if (!fs.existsSync(file)) {
       return fallback;
@@ -180,20 +158,22 @@ function readJson(
     );
   } catch (error) {
     console.error(
-      `[Storage] Failed reading ${file}:`,
-      error.message
+      `[Storage] ${file}: ${error.message}`
     );
 
     return fallback;
   }
 }
 
-function writeJson(
-  file,
-  value
-) {
+/*
+ * Serializes JSON writes so two simultaneous
+ * searches/loads cannot corrupt the same file.
+ */
+let writeQueue = Promise.resolve();
+
+function writeJson(file, value) {
   const temporary =
-    `${file}.tmp`;
+    `${file}.${process.pid}.${Date.now()}.tmp`;
 
   fs.writeFileSync(
     temporary,
@@ -211,9 +191,24 @@ function writeJson(
   );
 }
 
-function mimeForFormat(
-  format
-) {
+function queueWrite(file, value) {
+  writeQueue = writeQueue
+    .then(() => {
+      writeJson(
+        file,
+        value
+      );
+    })
+    .catch(error => {
+      console.error(
+        `[Storage] Write failed: ${error.message}`
+      );
+    });
+
+  return writeQueue;
+}
+
+function mimeForFormat(format) {
   switch (
     safeString(format).toLowerCase()
   ) {
@@ -236,9 +231,7 @@ function mimeForFormat(
   }
 }
 
-function extractQuality(
-  value
-) {
+function extractQuality(value) {
   const match =
     safeString(value).match(
       /(?:^|[._\-\s])(2160|1440|1080|720|576|480|360)p?(?:[._\-\s]|$)/i
@@ -249,6 +242,45 @@ function extractQuality(
     : "Unknown";
 }
 
+/* ============================================================
+   EXPRESS
+============================================================ */
+
+fs.mkdirSync(
+  DATA_DIR,
+  {
+    recursive: true
+  }
+);
+
+app.disable(
+  "x-powered-by"
+);
+
+app.use(
+  cors()
+);
+
+app.use(
+  express.json({
+    limit: "2mb",
+    strict: true
+  })
+);
+
+app.use(
+  express.static(
+    path.join(
+      __dirname,
+      "public"
+    )
+  )
+);
+
+/* ============================================================
+   HTTP JSON
+============================================================ */
+
 async function fetchJson(
   url,
   options = {}
@@ -256,68 +288,99 @@ async function fetchJson(
   const controller =
     new AbortController();
 
-  const timeout =
+  const timeoutMs =
+    toPositiveInt(
+      options.timeout,
+      REQUEST_TIMEOUT_MS
+    );
+
+  const timer =
     setTimeout(
-      () =>
-        controller.abort(),
-      options.timeout ||
-        REQUEST_TIMEOUT_MS
+      () => controller.abort(),
+      timeoutMs
     );
 
   try {
+    const headers = {
+      Accept:
+        "application/json",
+
+      "User-Agent":
+        USER_AGENT,
+
+      ...(options.headers || {})
+    };
+
+    const init = {
+      method:
+        options.method ||
+        "GET",
+
+      headers,
+
+      signal:
+        controller.signal
+    };
+
+    if (
+      options.body !==
+      undefined
+    ) {
+      init.body =
+        JSON.stringify(
+          options.body
+        );
+
+      headers[
+        "Content-Type"
+      ] =
+        "application/json";
+    }
+
     const response =
       await fetch(
         url,
-        {
-          method:
-            options.method ||
-            "GET",
-
-          headers: {
-            Accept:
-              "application/json",
-
-            "User-Agent":
-              USER_AGENT,
-
-            ...(options.headers || {})
-          },
-
-          body:
-            options.body === undefined
-              ? undefined
-              : JSON.stringify(
-                  options.body
-                ),
-
-          signal:
-            controller.signal
-        }
+        init
       );
+
+    const text =
+      await response.text();
 
     if (!response.ok) {
       throw new Error(
-        `HTTP ${response.status} ${response.statusText}`
+        `HTTP ${response.status} ${response.statusText}` +
+        (
+          text
+            ? `: ${text.slice(0, 300)}`
+            : ""
+        )
       );
     }
 
-    return await response.json();
+    if (!text.trim()) {
+      return {};
+    }
+
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(
+        `Expected JSON from ${url}`
+      );
+    }
   } catch (error) {
     if (
       error?.name ===
       "AbortError"
     ) {
       throw new Error(
-        `Request timed out after ${
-          options.timeout ||
-          REQUEST_TIMEOUT_MS
-        }ms`
+        `Request timed out after ${timeoutMs}ms`
       );
     }
 
     throw error;
   } finally {
-    clearTimeout(timeout);
+    clearTimeout(timer);
   }
 }
 
@@ -326,7 +389,7 @@ async function fetchJson(
 ============================================================ */
 
 function normalizeMediaItem(
-  item
+  item = {}
 ) {
   item =
     item &&
@@ -349,9 +412,7 @@ function normalizeMediaItem(
   const sourceId =
     safeString(
       item.sourceId,
-      safeString(
-        item.id
-      )
+      safeString(item.id)
     );
 
   const title =
@@ -360,39 +421,14 @@ function normalizeMediaItem(
       "Untitled"
     );
 
-  const type =
-    safeString(
-      item.type,
-      "unknown"
-    ).toLowerCase();
-
   const id =
-    safeString(
-      item.id
-    ) ||
+    safeString(item.id) ||
     hash(
       `${providerId}:${sourceId}:${title}`
     );
 
-  const sourceUrl =
-    normalizeUrl(
-      item.sourceUrl ||
-      item.url ||
-      item.link
-    );
-
-  const poster =
-    normalizeUrl(
-      item.poster ||
-      item.posterUrl ||
-      item.image
-    );
-
-  const backdrop =
-    normalizeUrl(
-      item.backdrop ||
-      item.backdropUrl
-    );
+  const yearNumber =
+    Number(item.year);
 
   return {
     id,
@@ -403,7 +439,12 @@ function normalizeMediaItem(
 
     sourceId,
 
-    sourceUrl,
+    sourceUrl:
+      normalizeUrl(
+        item.sourceUrl ||
+        item.url ||
+        item.link
+      ),
 
     title,
 
@@ -413,18 +454,32 @@ function normalizeMediaItem(
         title
       ),
 
-    type,
+    type:
+      safeString(
+        item.type,
+        "unknown"
+      ).toLowerCase(),
 
     year:
       Number.isFinite(
-        Number(item.year)
-      )
-        ? Number(item.year)
+        yearNumber
+      ) &&
+      yearNumber > 0
+        ? yearNumber
         : null,
 
-    poster,
+    poster:
+      normalizeUrl(
+        item.poster ||
+        item.posterUrl ||
+        item.image
+      ),
 
-    backdrop,
+    backdrop:
+      normalizeUrl(
+        item.backdrop ||
+        item.backdropUrl
+      ),
 
     description:
       safeString(
@@ -432,10 +487,12 @@ function normalizeMediaItem(
       ),
 
     rating:
-      item.rating ?? null,
+      item.rating ??
+      null,
 
     duration:
-      item.duration ?? null,
+      item.duration ??
+      null,
 
     genres:
       Array.isArray(
@@ -462,20 +519,18 @@ function normalizeMediaItem(
       ),
 
     season:
-      item.season ?? null,
+      item.season ??
+      null,
 
     episode:
-      item.episode ?? null,
+      item.episode ??
+      null,
 
-    /*
-     * IMPORTANT:
-     * CloudStream's LoadResponse data is needed
-     * by loadLinks().
-     */
     data:
       safeString(
         item.data
-      ) || null,
+      ) ||
+      null,
 
     episodes:
       Array.isArray(
@@ -530,32 +585,134 @@ if (
   mediaLibrary = [];
 }
 
+function libraryKey(item) {
+  return (
+    `${normalizeExtensionName(
+      item.providerId
+    )}:` +
+    `${safeString(
+      item.sourceId,
+      safeString(item.id)
+    )}`
+  );
+}
+
+function mergeMedia(
+  oldItem,
+  newItem
+) {
+  const merged = {
+    ...oldItem,
+    ...newItem
+  };
+
+  for (
+    const key of [
+      "sourceUrl",
+      "poster",
+      "backdrop",
+      "description",
+      "data",
+      "rating",
+      "duration"
+    ]
+  ) {
+    if (
+      !newItem[key] &&
+      oldItem[key]
+    ) {
+      merged[key] =
+        oldItem[key];
+    }
+  }
+
+  for (
+    const key of [
+      "genres",
+      "tags",
+      "episodes",
+      "seasons",
+      "sources"
+    ]
+  ) {
+    if (
+      (
+        !Array.isArray(
+          newItem[key]
+        ) ||
+        !newItem[key].length
+      ) &&
+      Array.isArray(
+        oldItem[key]
+      )
+    ) {
+      merged[key] =
+        oldItem[key];
+    }
+  }
+
+  merged.metadata = {
+    ...(oldItem.metadata || {}),
+    ...(newItem.metadata || {})
+  };
+
+  return merged;
+}
+
 function mergeIntoLibrary(
   items
 ) {
   const normalized =
-    items
+    (
+      Array.isArray(items)
+        ? items
+        : []
+    )
       .map(
         normalizeMediaItem
       )
       .filter(
         item =>
-          item.title &&
           item.title !==
-            "Untitled"
+          "Untitled"
       );
 
-  mediaLibrary =
-    uniqueBy(
-      [
-        ...normalized,
-        ...mediaLibrary
-      ],
-      item =>
-        `${item.providerId}:${item.sourceId || item.id}`
+  const existing =
+    new Map(
+      mediaLibrary.map(
+        item => [
+          libraryKey(item),
+          item
+        ]
+      )
     );
 
-  writeJson(
+  for (
+    const item of normalized
+  ) {
+    const key =
+      libraryKey(item);
+
+    const old =
+      existing.get(key);
+
+    existing.set(
+      key,
+      old
+        ? mergeMedia(
+            old,
+            item
+          )
+        : item
+    );
+  }
+
+  mediaLibrary =
+    [
+      ...existing.values()
+    ];
+
+  queueWrite(
     CACHE_FILE,
     mediaLibrary
   );
@@ -564,7 +721,7 @@ function mergeIntoLibrary(
 }
 
 /* ============================================================
-   PROVIDER SYSTEM
+   NATIVE PROVIDERS
 ============================================================ */
 
 const providers =
@@ -615,10 +772,11 @@ const InternetArchiveProvider = {
 
     const rows =
       Math.min(
-        Number(
-          options.limit || 40
+        toPositiveInt(
+          options.limit,
+          40
         ),
-        100
+        MAX_RESULTS
       );
 
     const params =
@@ -627,14 +785,7 @@ const InternetArchiveProvider = {
           `title:(${q}) AND mediatype:movies`,
 
         fl:
-          [
-            "identifier",
-            "title",
-            "description",
-            "creator",
-            "year",
-            "date"
-          ].join(","),
+          "identifier,title,description,year,date",
 
         rows:
           String(rows),
@@ -651,70 +802,29 @@ const InternetArchiveProvider = {
         `https://archive.org/advancedsearch.php?${params}`
       );
 
-    const docs =
-      data?.response?.docs;
-
-    if (
-      !Array.isArray(docs)
-    ) {
-      return [];
-    }
-
-    return docs.map(
-      doc =>
-        normalizeMediaItem({
-          providerId:
-            this.id,
-
-          providerName:
-            this.name,
-
-          id:
-            safeString(
-              doc.identifier
-            ),
-
-          sourceId:
-            safeString(
-              doc.identifier
-            ),
-
-          sourceUrl:
-            `https://archive.org/details/${encodeURIComponent(
-              safeString(
-                doc.identifier
-              )
-            )}`,
-
-          title:
-            safeString(
-              doc.title,
-              doc.identifier
-            ),
-
-          description:
-            safeString(
-              doc.description
-            ),
-
-          year:
-            Number.isFinite(
-              Number(doc.year)
-            )
-              ? Number(
-                  doc.year
-                )
-              : null,
-
-          type:
-            "movie"
-        })
-    );
+    return Array.isArray(
+      data?.response?.docs
+    )
+      ? data.response.docs
+          .map(
+            archiveItem
+          )
+          .filter(Boolean)
+      : [];
   },
 
   async home(
     options = {}
   ) {
+    const rows =
+      Math.min(
+        toPositiveInt(
+          options.limit,
+          40
+        ),
+        MAX_RESULTS
+      );
+
     const params =
       new URLSearchParams({
         q:
@@ -724,14 +834,7 @@ const InternetArchiveProvider = {
           "identifier,title,description,year,date",
 
         rows:
-          String(
-            Math.min(
-              Number(
-                options.limit || 40
-              ),
-              100
-            )
-          ),
+          String(rows),
 
         output:
           "json",
@@ -748,65 +851,15 @@ const InternetArchiveProvider = {
         `https://archive.org/advancedsearch.php?${params}`
       );
 
-    const docs =
-      data?.response?.docs;
-
-    if (
-      !Array.isArray(docs)
-    ) {
-      return [];
-    }
-
-    return docs.map(
-      doc =>
-        normalizeMediaItem({
-          providerId:
-            this.id,
-
-          providerName:
-            this.name,
-
-          id:
-            safeString(
-              doc.identifier
-            ),
-
-          sourceId:
-            safeString(
-              doc.identifier
-            ),
-
-          sourceUrl:
-            `https://archive.org/details/${encodeURIComponent(
-              safeString(
-                doc.identifier
-              )
-            )}`,
-
-          title:
-            safeString(
-              doc.title,
-              doc.identifier
-            ),
-
-          description:
-            safeString(
-              doc.description
-            ),
-
-          year:
-            Number.isFinite(
-              Number(doc.year)
-            )
-              ? Number(
-                  doc.year
-                )
-              : null,
-
-          type:
-            "movie"
-        })
-    );
+    return Array.isArray(
+      data?.response?.docs
+    )
+      ? data.response.docs
+          .map(
+            archiveItem
+          )
+          .filter(Boolean)
+      : [];
   },
 
   async load(
@@ -815,9 +868,7 @@ const InternetArchiveProvider = {
     const identifier =
       safeString(
         item.sourceId,
-        safeString(
-          item.id
-        )
+        safeString(item.id)
       );
 
     if (!identifier) {
@@ -833,124 +884,110 @@ const InternetArchiveProvider = {
         )}`
       );
 
-    const files =
-      Array.isArray(
-        metadata?.files
-      )
-        ? metadata.files
-        : [];
-
     const sources =
-      files
-        .map(
-          file => {
-            const name =
-              safeString(
-                file.name
-              );
-
-            if (!name) {
-              return null;
-            }
-
-            const lower =
-              name.toLowerCase();
-
-            let format;
-
-            if (
-              lower.endsWith(
-                ".m3u8"
-              )
-            ) {
-              format =
-                "hls";
-            } else if (
-              lower.endsWith(
-                ".mp4"
-              )
-            ) {
-              format =
-                "mp4";
-            } else if (
-              lower.endsWith(
-                ".webm"
-              )
-            ) {
-              format =
-                "webm";
-            } else {
-              return null;
-            }
-
-            return {
-              id:
-                hash(
-                  `${identifier}:${name}`
-                ),
-
-              title:
-                name,
-
-              url:
-                `https://archive.org/download/${encodeURIComponent(
-                  identifier
-                )}/${name}`,
-
-              format,
-
-              mime:
-                mimeForFormat(
-                  format
-                ),
-
-              quality:
-                extractQuality(
-                  name
-                ),
-
-              providerId:
-                this.id,
-
-              providerName:
-                this.name
-            };
-          }
+      (
+        Array.isArray(
+          metadata?.files
         )
+          ? metadata.files
+          : []
+      )
+        .map(file => {
+          const name =
+            safeString(
+              file?.name
+            );
+
+          if (!name) {
+            return null;
+          }
+
+          const lower =
+            name.toLowerCase();
+
+          let format =
+            "";
+
+          if (
+            lower.endsWith(
+              ".m3u8"
+            )
+          ) {
+            format =
+              "hls";
+          } else if (
+            lower.endsWith(
+              ".mp4"
+            )
+          ) {
+            format =
+              "mp4";
+          } else if (
+            lower.endsWith(
+              ".webm"
+            )
+          ) {
+            format =
+              "webm";
+          } else {
+            return null;
+          }
+
+          const encodedPath =
+            name
+              .split("/")
+              .map(
+                encodeURIComponent
+              )
+              .join("/");
+
+          return {
+            id:
+              hash(
+                `${identifier}:${name}`
+              ),
+
+            title:
+              name,
+
+            url:
+              `https://archive.org/download/${encodeURIComponent(
+                identifier
+              )}/${encodedPath}`,
+
+            format,
+
+            mime:
+              mimeForFormat(
+                format
+              ),
+
+            quality:
+              extractQuality(
+                name
+              ),
+
+            providerId:
+              this.id,
+
+            providerName:
+              this.name
+          };
+        })
         .filter(Boolean);
 
     return {
-      ...normalizeMediaItem({
-        providerId:
-          this.id,
-
-        providerName:
-          this.name,
-
-        id:
-          identifier,
-
-        sourceId:
-          identifier,
-
-        sourceUrl:
-          `https://archive.org/details/${encodeURIComponent(
-            identifier
-          )}`,
+      ...archiveItem({
+        identifier,
 
         title:
-          safeString(
-            metadata?.metadata?.title,
-            identifier
-          ),
+          metadata?.metadata?.title,
 
         description:
-          safeString(
-            metadata?.metadata?.description
-          ),
+          metadata?.metadata?.description,
 
-        type:
-          "movie"
+        year:
+          metadata?.metadata?.year
       }),
 
       sources:
@@ -970,10 +1007,61 @@ const InternetArchiveProvider = {
         item
       );
 
-    return loaded.sources ||
-      [];
+    return (
+      loaded.sources ||
+      []
+    );
   }
 };
+
+function archiveItem(
+  doc
+) {
+  const identifier =
+    safeString(
+      doc?.identifier
+    );
+
+  if (!identifier) {
+    return null;
+  }
+
+  return normalizeMediaItem({
+    providerId:
+      "internet-archive",
+
+    providerName:
+      "Internet Archive",
+
+    id:
+      identifier,
+
+    sourceId:
+      identifier,
+
+    sourceUrl:
+      `https://archive.org/details/${encodeURIComponent(
+        identifier
+      )}`,
+
+    title:
+      safeString(
+        doc?.title,
+        identifier
+      ),
+
+    description:
+      safeString(
+        doc?.description
+      ),
+
+    year:
+      doc?.year,
+
+    type:
+      "movie"
+  });
+}
 
 registerProvider(
   InternetArchiveProvider
@@ -1103,70 +1191,18 @@ if (
   };
 }
 
-function normalizeExtensionName(
-  value
-) {
-  return safeString(value)
-    .toLowerCase()
-    .replace(
-      /[^a-z0-9]/g,
-      ""
-    );
-}
-
-function extensionMatches(
-  extension,
-  requested
-) {
-  const requestedName =
-    normalizeExtensionName(
-      requested
-    );
-
-  const values = [
-    extension.name,
-    extension.internalName
-  ]
-    .filter(Boolean)
-    .map(
-      normalizeExtensionName
-    );
-
-  if (
-    values.includes(
-      requestedName
-    )
-  ) {
-    return true;
-  }
-
-  const aliases =
-    EXTENSION_ALIASES[
-      requestedName
-    ] || [];
-
-  return aliases.some(
-    alias =>
-      values.includes(
-        normalizeExtensionName(
-          alias
-        )
-      )
-  );
-}
-
 function getConfiguredRepositories() {
-  const configured =
+  const raw =
     safeString(
       process.env
         .CLOUDSTREAM_REPOSITORIES
     );
 
-  if (!configured) {
+  if (!raw) {
     return DEFAULT_CLOUDSTREAM_REPOSITORIES;
   }
 
-  return configured
+  return raw
     .split(",")
     .map(
       value =>
@@ -1179,7 +1215,9 @@ function getConfiguredRepositories() {
         index
       ) => ({
         id:
-          `custom-${index + 1}-${hash(url)}`,
+          `custom-${index + 1}-${hash(
+            url
+          )}`,
 
         name:
           `CloudStream Repository ${index + 1}`,
@@ -1189,10 +1227,50 @@ function getConfiguredRepositories() {
     );
 }
 
+function extensionMatches(
+  extension,
+  requested
+) {
+  const target =
+    normalizeExtensionName(
+      requested
+    );
+
+  const values = [
+    extension?.name,
+    extension?.internalName
+  ]
+    .map(
+      normalizeExtensionName
+    )
+    .filter(Boolean);
+
+  if (
+    values.includes(
+      target
+    )
+  ) {
+    return true;
+  }
+
+  return (
+    EXTENSION_ALIASES[
+      target
+    ] || []
+  ).some(
+    alias =>
+      values.includes(
+        normalizeExtensionName(
+          alias
+        )
+      )
+  );
+}
+
 function normalizeExtension(
   plugin,
   repository,
-  pluginListUrl
+  listUrl
 ) {
   if (
     !plugin ||
@@ -1219,8 +1297,10 @@ function normalizeExtension(
 
   const pluginUrl =
     normalizeUrl(
-      plugin.url,
-      pluginListUrl ||
+      plugin.url ||
+        plugin.file ||
+        plugin.downloadUrl,
+      listUrl ||
         repository.url
     );
 
@@ -1268,8 +1348,9 @@ function normalizeExtension(
 
     iconUrl:
       normalizeUrl(
-        plugin.iconUrl,
-        pluginListUrl ||
+        plugin.iconUrl ||
+          plugin.icon,
+        listUrl ||
           repository.url
       ),
 
@@ -1285,13 +1366,15 @@ function normalizeExtension(
         plugin.language
       )
         ? plugin.language
-        : safeString(
-            plugin.language
-          )
-          ? [
+        : (
+            safeString(
               plugin.language
-            ]
-          : [],
+            )
+              ? [
+                  plugin.language
+                ]
+              : []
+          ),
 
     authors:
       Array.isArray(
@@ -1359,10 +1442,41 @@ function extractPlugins(
   return [];
 }
 
+function pluginListUrls(
+  manifest,
+  repositoryUrl
+) {
+  const lists =
+    Array.isArray(
+      manifest?.pluginLists
+    )
+      ? manifest.pluginLists
+      : [];
+
+  return lists
+    .map(
+      item =>
+        typeof item ===
+        "string"
+          ? item
+          : item?.url ||
+            item?.urlString ||
+            item?.file
+    )
+    .map(
+      value =>
+        normalizeUrl(
+          value,
+          repositoryUrl
+        )
+    )
+    .filter(Boolean);
+}
+
 async function syncOneRepository(
   repository
 ) {
-  const repoManifest =
+  const manifest =
     await fetchJson(
       repository.url
     );
@@ -1370,13 +1484,10 @@ async function syncOneRepository(
   const extensions =
     [];
 
-  /*
-   * Some repositories expose plugins directly.
-   */
   for (
     const plugin of
       extractPlugins(
-        repoManifest
+        manifest
       )
   ) {
     const extension =
@@ -1393,53 +1504,32 @@ async function syncOneRepository(
     }
   }
 
-  /*
-   * Standard CloudStream format:
-   *
-   * repo.json
-   *    |
-   *    +-- pluginLists[]
-   *            |
-   *            +-- plugins.json
-   */
-  const pluginLists =
-    Array.isArray(
-      repoManifest?.pluginLists
-    )
-      ? repoManifest.pluginLists
-      : [];
+  const lists =
+    pluginListUrls(
+      manifest,
+      repository.url
+    );
 
   for (
-    const pluginList
-      of pluginLists
+    const listUrl of lists
   ) {
-    const pluginListUrl =
-      normalizeUrl(
-        pluginList,
-        repository.url
-      );
-
-    if (!pluginListUrl) {
-      continue;
-    }
-
     try {
-      const pluginManifest =
+      const list =
         await fetchJson(
-          pluginListUrl
+          listUrl
         );
 
       for (
         const plugin of
           extractPlugins(
-            pluginManifest
+            list
           )
       ) {
         const extension =
           normalizeExtension(
             plugin,
             repository,
-            pluginListUrl
+            listUrl
           );
 
         if (extension) {
@@ -1451,9 +1541,8 @@ async function syncOneRepository(
     } catch (
       error
     ) {
-      console.error(
-        `[Extensions] Failed ${pluginListUrl}:`,
-        error.message
+      console.warn(
+        `[Extensions] ${repository.name}: ${listUrl}: ${error.message}`
       );
     }
   }
@@ -1466,15 +1555,16 @@ async function syncOneRepository(
         "online",
 
       manifestVersion:
-        repoManifest?.manifestVersion ??
+        manifest?.manifestVersion ??
         null,
 
       description:
         safeString(
-          repoManifest?.description
+          manifest?.description
         ),
 
-      pluginLists,
+      pluginLists:
+        lists,
 
       checkedAt:
         now()
@@ -1484,178 +1574,145 @@ async function syncOneRepository(
   };
 }
 
+/*
+ * Prevents multiple /api/sync requests or scheduled
+ * syncs from modifying extension state simultaneously.
+ */
+let extensionSyncInProgress =
+  null;
+
 async function syncExtensions() {
-  const repositories =
-    getConfiguredRepositories();
+  if (
+    extensionSyncInProgress
+  ) {
+    return extensionSyncInProgress;
+  }
 
-  const repositoryResults =
-    [];
+  extensionSyncInProgress =
+    (async () => {
+      const repositories =
+        getConfiguredRepositories();
 
-  const discovered =
-    [];
+      const repositoryResults =
+        [];
 
-  await Promise.all(
-    repositories.map(
-      async repository => {
-        try {
-          const result =
-            await syncOneRepository(
-              repository
-            );
+      const discovered =
+        [];
 
-          repositoryResults.push(
-            result.repository
+      await Promise.all(
+        repositories.map(
+          async repository => {
+            try {
+              const result =
+                await syncOneRepository(
+                  repository
+                );
+
+              repositoryResults.push(
+                result.repository
+              );
+
+              discovered.push(
+                ...result.extensions
+              );
+
+              console.log(
+                `[Extensions] ${repository.name}: ${result.extensions.length} extensions`
+              );
+            } catch (
+              error
+            ) {
+              console.error(
+                `[Extensions] ${repository.name}: ${error.message}`
+              );
+
+              repositoryResults.push({
+                ...repository,
+
+                status:
+                  "offline",
+
+                error:
+                  error.message,
+
+                checkedAt:
+                  now()
+              });
+            }
+          }
+        )
+      );
+
+      const extensions =
+        uniqueBy(
+          discovered,
+          extension =>
+            `${normalizeExtensionName(
+              extension.internalName
+            )}:${extension.pluginUrl}`
+        );
+
+      const enabledExtensions =
+        extensions.filter(
+          extension =>
+            REQUESTED_EXTENSIONS.some(
+              requested =>
+                extensionMatches(
+                  extension,
+                  requested
+                )
+            )
+        );
+
+      extensionState = {
+        version:
+          2,
+
+        updatedAt:
+          now(),
+
+        repositories:
+          repositoryResults,
+
+        extensions,
+
+        enabledExtensions
+      };
+
+      queueWrite(
+        EXTENSIONS_FILE,
+        extensionState
+      );
+
+      for (
+        const requested of
+          REQUESTED_EXTENSIONS
+      ) {
+        const found =
+          enabledExtensions.some(
+            extension =>
+              extensionMatches(
+                extension,
+                requested
+              )
           );
 
-          discovered.push(
-            ...result.extensions
+        if (!found) {
+          console.warn(
+            `[Extensions] ${requested}: NOT FOUND`
           );
-
-          console.log(
-            `[Extensions] ${repository.name}: ` +
-            `${result.extensions.length} extensions`
-          );
-        } catch (
-          error
-        ) {
-          console.error(
-            `[Extensions] ${repository.name}:`,
-            error.message
-          );
-
-          repositoryResults.push({
-            ...repository,
-
-            status:
-              "offline",
-
-            error:
-              error.message,
-
-            checkedAt:
-              now()
-          });
         }
       }
-    )
-  );
 
-  const extensions =
-    uniqueBy(
-      discovered,
-      extension =>
-        `${normalizeExtensionName(
-          extension.internalName
-        )}:${extension.pluginUrl}`
-    );
+      return extensionState;
+    })();
 
-  const enabled =
-    extensions.filter(
-      extension =>
-        REQUESTED_EXTENSIONS.some(
-          requested =>
-            extensionMatches(
-              extension,
-              requested
-            )
-        )
-    );
-
-  extensionState = {
-    version:
-      2,
-
-    updatedAt:
-      now(),
-
-    repositories:
-      repositoryResults,
-
-    extensions,
-
-    enabledExtensions:
-      enabled
-  };
-
-  writeJson(
-    EXTENSIONS_FILE,
-    extensionState
-  );
-
-  console.log(
-    `[Extensions] ${extensions.length} discovered; ` +
-    `${enabled.length} requested/enabled.`
-  );
-
-  for (
-    const requested
-      of REQUESTED_EXTENSIONS
-  ) {
-    const matches =
-      enabled.filter(
-        extension =>
-          extensionMatches(
-            extension,
-            requested
-          )
-      );
-
-    if (
-      matches.length
-    ) {
-      console.log(
-        `[Extensions] ${requested}: ` +
-        matches
-          .map(
-            extension =>
-              extension.name
-          )
-          .join(", ")
-      );
-    } else {
-      console.warn(
-        `[Extensions] ${requested}: NOT FOUND`
-      );
-    }
+  try {
+    return await extensionSyncInProgress;
+  } finally {
+    extensionSyncInProgress =
+      null;
   }
-
-  return extensionState;
-}
-
-/* ============================================================
-   CLOUDSTREAM BRIDGE
-============================================================ */
-
-async function bridgeRequest(
-  endpoint,
-  body = {}
-) {
-  if (!BRIDGE_URL) {
-    throw new Error(
-      "CLOUDSTREAM_BRIDGE_URL is not configured"
-    );
-  }
-
-  return fetchJson(
-    `${BRIDGE_URL}/${endpoint.replace(
-      /^\/+/,
-      ""
-    )}`,
-    {
-      method:
-        "POST",
-
-      body,
-
-      timeout:
-        BRIDGE_TIMEOUT_MS,
-
-      headers: {
-        "Content-Type":
-          "application/json"
-      }
-    }
-  );
 }
 
 function getEnabledExtensions() {
@@ -1681,21 +1738,71 @@ function findExtension(
   return getEnabledExtensions()
     .find(
       extension =>
-        normalizeExtensionName(
-          extension.name
-        ) === target ||
-        normalizeExtensionName(
-          extension.internalName
-        ) === target ||
-        normalizeExtensionName(
+        [
+          extension.name,
+          extension.internalName,
           extension.id
-        ) === target
-    ) || null;
+        ].some(
+          value =>
+            normalizeExtensionName(
+              value
+            ) === target
+        )
+    ) ||
+    null;
 }
 
 /* ============================================================
-   CLOUDSTREAM SEARCH
+   CLOUDSTREAM BRIDGE
 ============================================================ */
+
+async function bridgeRequest(
+  endpoint,
+  body = {}
+) {
+  if (!BRIDGE_URL) {
+    throw new Error(
+      "CloudStream bridge URL is invalid or not configured"
+    );
+  }
+
+  return fetchJson(
+    `${BRIDGE_URL}/${endpoint.replace(
+      /^\/+/,
+      ""
+    )}`,
+    {
+      method:
+        "POST",
+
+      body,
+
+      timeout:
+        BRIDGE_TIMEOUT_MS
+    }
+  );
+}
+
+function bridgeResultArray(
+  result,
+  key
+) {
+  if (
+    Array.isArray(result)
+  ) {
+    return result;
+  }
+
+  if (
+    Array.isArray(
+      result?.[key]
+    )
+  ) {
+    return result[key];
+  }
+
+  return [];
+}
 
 async function bridgeSearch(
   query,
@@ -1714,30 +1821,29 @@ async function bridgeSearch(
             "all"
           ),
 
+        limit:
+          Math.min(
+            toPositiveInt(
+              options.limit,
+              50
+            ),
+            MAX_RESULTS
+          ),
+
         extensions:
           getEnabledExtensions()
       }
     );
 
-  const results =
-    Array.isArray(result)
-      ? result
-      : Array.isArray(
-          result?.results
-        )
-        ? result.results
-        : [];
-
-  return results
+  return bridgeResultArray(
+    result,
+    "results"
+  )
     .map(
       normalizeBridgeResult
     )
     .filter(Boolean);
 }
-
-/* ============================================================
-   CLOUDSTREAM HOME
-============================================================ */
 
 async function bridgeHome(
   options = {}
@@ -1754,10 +1860,11 @@ async function bridgeHome(
 
         limit:
           Math.min(
-            Number(
-              options.limit || 100
+            toPositiveInt(
+              options.limit,
+              100
             ),
-            200
+            MAX_RESULTS
           ),
 
         extensions:
@@ -1765,25 +1872,15 @@ async function bridgeHome(
       }
     );
 
-  const results =
-    Array.isArray(result)
-      ? result
-      : Array.isArray(
-          result?.items
-        )
-        ? result.items
-        : [];
-
-  return results
+  return bridgeResultArray(
+    result,
+    "items"
+  )
     .map(
       normalizeBridgeResult
     )
     .filter(Boolean);
 }
-
-/* ============================================================
-   CLOUDSTREAM LOAD
-============================================================ */
 
 async function bridgeLoad(
   item
@@ -1794,10 +1891,9 @@ async function bridgeLoad(
     ) ||
     findExtension(
       item.providerName
-    ) ||
-    null;
+    );
 
-  const result =
+  return normalizeBridgeLoad(
     await bridgeRequest(
       "load",
       {
@@ -1817,24 +1913,16 @@ async function bridgeLoad(
 
         url:
           item.sourceUrl ||
-          item.url ||
           null
       }
-    );
-
-  return normalizeBridgeLoad(
-    result,
+    ),
     item
   );
 }
 
-/* ============================================================
-   CLOUDSTREAM SOURCES
-============================================================ */
-
 async function bridgeSources(
   item,
-  data = null
+  data
 ) {
   const extension =
     findExtension(
@@ -1842,10 +1930,9 @@ async function bridgeSources(
     ) ||
     findExtension(
       item.providerName
-    ) ||
-    null;
+    );
 
-  const result =
+  return normalizeBridgeSources(
     await bridgeRequest(
       "sources",
       {
@@ -1865,28 +1952,19 @@ async function bridgeSources(
 
         url:
           item.sourceUrl ||
-          item.url ||
           null,
 
-        /*
-         * This is the important CloudStream
-         * LoadResponse data passed to loadLinks().
-         */
         data:
-          data ||
-          item.data ||
+          safeString(data) ||
           null
       }
-    );
-
-  return normalizeBridgeSources(
-    result,
+    ),
     item
   );
 }
 
 /* ============================================================
-   BRIDGE RESULT NORMALIZATION
+   CLOUDSTREAM RESULT NORMALIZATION
 ============================================================ */
 
 function normalizeBridgeResult(
@@ -1900,47 +1978,35 @@ function normalizeBridgeResult(
     return null;
   }
 
-  /*
-   * The runtime may return:
-   *
-   * provider: "CineStream"
-   *
-   * or:
-   *
-   * provider: {
-   *   id: "...",
-   *   name: "CineStream"
-   * }
-   *
-   * or explicit providerName/providerId.
-   */
+  const providerObject =
+    result.provider &&
+    typeof result.provider ===
+      "object"
+      ? result.provider
+      : null;
+
   const providerName =
     safeString(
       result.providerName,
+
       safeString(
-        typeof result.provider === "object"
-          ? result.provider?.name
-          : result.provider,
-        "CloudStream"
+        providerObject?.name,
+
+        typeof result.provider ===
+        "string"
+          ? result.provider
+          : "CloudStream"
       )
     );
 
   const providerId =
     safeString(
       result.providerId,
+
       safeString(
-        typeof result.provider === "object"
-          ? result.provider?.id
-          : null,
+        providerObject?.id,
         providerName
       )
-    );
-
-  const sourceUrl =
-    normalizeUrl(
-      result.sourceUrl ||
-      result.url ||
-      result.link
     );
 
   return normalizeMediaItem({
@@ -1950,7 +2016,10 @@ function normalizeBridgeResult(
 
     providerName,
 
-    sourceUrl,
+    sourceUrl:
+      result.sourceUrl ||
+      result.url ||
+      result.link,
 
     sourceId:
       safeString(
@@ -1970,74 +2039,57 @@ function normalizeBridgeResult(
 }
 
 /* ============================================================
-   BRIDGE LOAD NORMALIZATION
+   CLOUDSTREAM LOAD NORMALIZATION
 ============================================================ */
 
 function normalizeBridgeLoad(
   result,
   originalItem
 ) {
-  if (
-    !result ||
-    typeof result !==
+  const merged =
+    result &&
+    typeof result ===
       "object"
-  ) {
-    return normalizeMediaItem(
-      originalItem
-    );
-  }
+      ? {
+          ...originalItem,
+          ...result,
+
+          providerId:
+            result.providerId ||
+            originalItem.providerId,
+
+          providerName:
+            result.providerName ||
+            originalItem.providerName,
+
+          sourceId:
+            result.sourceId ||
+            originalItem.sourceId,
+
+          sourceUrl:
+            result.sourceUrl ||
+            result.url ||
+            originalItem.sourceUrl,
+
+          data:
+            result.data ||
+            originalItem.data ||
+            null,
+
+          raw:
+            result.raw ||
+            result
+        }
+      : originalItem;
 
   const item =
-    normalizeBridgeResult({
-      ...originalItem,
-      ...result,
+    normalizeBridgeResult(
+      merged
+    );
 
-      providerId:
-        result.providerId ||
-        originalItem.providerId,
-
-      providerName:
-        result.providerName ||
-        originalItem.providerName,
-
-      sourceId:
-        result.sourceId ||
-        originalItem.sourceId,
-
-      sourceUrl:
-        result.sourceUrl ||
-        result.url ||
-        originalItem.sourceUrl,
-
-      data:
-        result.data ||
-        originalItem.data ||
-        null,
-
-      raw:
-        result.raw ||
-        result
-    });
-
-  /*
-   * Preserve CloudStream's actual LoadResponse data.
-   */
-  if (
-    safeString(
-      result.data
-    )
-  ) {
-    item.data =
-      result.data;
-  }
-
-  /*
-   * Preserve source lists returned by
-   * the runtime, if present.
-   */
   if (
     Array.isArray(
-      result.sources
+      result?.sources
     )
   ) {
     item.sources =
@@ -2047,55 +2099,22 @@ function normalizeBridgeLoad(
       );
   }
 
-  /*
-   * Preserve episodes exactly enough for
-   * the frontend to request a particular
-   * episode's data.
-   */
   if (
     Array.isArray(
-      result.episodes
+      result?.episodes
     )
   ) {
     item.episodes =
-      result.episodes.map(
-        episode => ({
-          ...episode,
-
-          data:
-            safeString(
-              episode?.data
-            ) || null,
-
-          season:
-            episode?.season ??
-            null,
-
-          episode:
-            episode?.episode ??
-            null,
-
-          name:
-            safeString(
-              episode?.name,
-              safeString(
-                episode?.title,
-                "Episode"
-              )
-            ),
-
-          poster:
-            normalizeUrl(
-              episode?.poster ||
-              episode?.posterUrl
-            )
-        })
-      );
+      result.episodes
+        .map(
+          normalizeEpisode
+        )
+        .filter(Boolean);
   }
 
   if (
     Array.isArray(
-      result.seasons
+      result?.seasons
     )
   ) {
     item.seasons =
@@ -2105,73 +2124,140 @@ function normalizeBridgeLoad(
   return item;
 }
 
+function normalizeEpisode(
+  episode
+) {
+  if (
+    !episode ||
+    typeof episode !==
+      "object"
+  ) {
+    return null;
+  }
+
+  return {
+    ...episode,
+
+    data:
+      safeString(
+        episode.data
+      ) ||
+      null,
+
+    season:
+      episode.season ??
+      null,
+
+    episode:
+      episode.episode ??
+      null,
+
+    name:
+      safeString(
+        episode.name,
+        safeString(
+          episode.title,
+          "Episode"
+        )
+      ),
+
+    poster:
+      normalizeUrl(
+        episode.poster ||
+        episode.posterUrl
+      )
+  };
+}
+
 /* ============================================================
    SOURCE NORMALIZATION
 ============================================================ */
+
+function sourceToSource(
+  value,
+  parent
+) {
+  const url =
+    normalizeUrl(
+      value
+    );
+
+  if (!url) {
+    return null;
+  }
+
+  const isM3u8 =
+    /\.m3u8(?:$|\?)/i.test(
+      url
+    );
+
+  const isDash =
+    /\.mpd(?:$|\?)/i.test(
+      url
+    );
+
+  return {
+    id:
+      hash(url),
+
+    title:
+      value,
+
+    url,
+
+    format:
+      isM3u8
+        ? "hls"
+        : isDash
+          ? "dash"
+          : "",
+
+    mime:
+      mimeForFormat(
+        isM3u8
+          ? "hls"
+          : isDash
+            ? "dash"
+            : ""
+      ),
+
+    quality:
+      extractQuality(
+        value
+      ),
+
+    providerId:
+      parent.providerId,
+
+    providerName:
+      parent.providerName,
+
+    isM3u8,
+
+    isDash
+  };
+}
 
 function normalizeSources(
   sources,
   parent
 ) {
-  if (
-    !Array.isArray(
-      sources
-    )
-  ) {
-    return [];
-  }
-
   return uniqueBy(
-    sources
+    (
+      Array.isArray(sources)
+        ? sources
+        : []
+    )
       .map(
         source => {
           if (
             typeof source ===
-              "string"
+            "string"
           ) {
-            const url =
-              normalizeUrl(
-                source
-              );
-
-            if (!url) {
-              return null;
-            }
-
-            return {
-              id:
-                hash(url),
-
-              title:
-                source,
-
-              url,
-
-              format:
-                /\\.m3u8(?:$|\\?)/i.test(
-                  url
-                )
-                  ? "hls"
-                  : "",
-
-              mime:
-                /\\.m3u8(?:$|\\?)/i.test(
-                  url
-                )
-                  ? "application/vnd.apple.mpegurl"
-                  : null,
-
-              quality:
-                extractQuality(
-                  source
-                ),
-
-              providerId:
-                parent.providerId,
-
-              providerName:
-                parent.providerName
-            };
+            return sourceToSource(
+              source,
+              parent
+            );
           }
 
           if (
@@ -2204,22 +2290,22 @@ function normalizeSources(
               ).toLowerCase();
           }
 
-          if (!format) {
-            if (
-              /\\.m3u8(?:$|\\?)/i.test(
-                url
-              )
-            ) {
-              format =
-                "hls";
-            } else if (
-              /\\.mpd(?:$|\\?)/i.test(
-                url
-              )
-            ) {
-              format =
-                "dash";
-            }
+          if (
+            !format &&
+            /\.m3u8(?:$|\?)/i.test(
+              url
+            )
+          ) {
+            format =
+              "hls";
+          } else if (
+            !format &&
+            /\.mpd(?:$|\?)/i.test(
+              url
+            )
+          ) {
+            format =
+              "dash";
           }
 
           return {
@@ -2268,7 +2354,8 @@ function normalizeSources(
             referer:
               safeString(
                 source.referer
-              ) || undefined,
+              ) ||
+              undefined,
 
             subtitles:
               Array.isArray(
@@ -2278,12 +2365,12 @@ function normalizeSources(
                 : [],
 
             isM3u8:
-              /\\.m3u8(?:$|\\?)/i.test(
+              /\.m3u8(?:$|\?)/i.test(
                 url
               ),
 
             isDash:
-              /\\.mpd(?:$|\\?)/i.test(
+              /\.mpd(?:$|\?)/i.test(
                 url
               ),
 
@@ -2309,17 +2396,11 @@ function normalizeBridgeSources(
   result,
   parent
 ) {
-  const sources =
-    Array.isArray(result)
-      ? result
-      : Array.isArray(
-          result?.sources
-        )
-        ? result.sources
-        : [];
-
   return normalizeSources(
-    sources,
+    bridgeResultArray(
+      result,
+      "sources"
+    ),
     parent
   );
 }
@@ -2360,8 +2441,7 @@ async function searchProvider(
     error
   ) {
     console.error(
-      `[Provider:${provider.id}] Search failed:`,
-      error.message
+      `[Provider:${provider.id}] Search: ${error.message}`
     );
 
     return [];
@@ -2373,27 +2453,23 @@ async function searchAllProviders(
   options = {}
 ) {
   const tasks =
-    [];
-
-  /*
-   * Native providers.
-   */
-  for (
-    const provider of
-      providers.values()
-  ) {
-    tasks.push(
-      searchProvider(
-        provider,
-        query,
-        options
+    [
+      ...providers.values()
+    ]
+      .filter(
+        provider =>
+          typeof provider.search ===
+          "function"
       )
-    );
-  }
+      .map(
+        provider =>
+          searchProvider(
+            provider,
+            query,
+            options
+          )
+      );
 
-  /*
-   * Actual CloudStream JVM runtime.
-   */
   if (BRIDGE_URL) {
     tasks.push(
       bridgeSearch(
@@ -2402,98 +2478,7 @@ async function searchAllProviders(
       ).catch(
         error => {
           console.error(
-            "[CloudStream Search]",
-            error.message
-          );
-
-          return [];
-        }
-      )
-    );
-  }
-
-  const results =
-    await Promise.all(
-      tasks
-    );
-
-  const merged =
-    results
-      .flat()
-      .filter(Boolean);
-
-  return uniqueBy(
-    merged,
-    item =>
-      `${normalizeExtensionName(
-        item.providerId
-      )}:${slug(
-        item.title
-      )}:${item.sourceId || item.id}`
-  );
-}
-
-/* ============================================================
-   HOME AGGREGATION
-============================================================ */
-
-async function homeAllProviders(
-  options = {}
-) {
-  const tasks =
-    [];
-
-  for (
-    const provider of
-      providers.values()
-  ) {
-    if (
-      typeof provider.home !==
-      "function"
-    ) {
-      continue;
-    }
-
-    tasks.push(
-      (async () => {
-        try {
-          const result =
-            await provider.home(
-              options
-            );
-
-          return Array.isArray(
-            result
-          )
-            ? result
-                .map(
-                  normalizeMediaItem
-                )
-                .filter(Boolean)
-            : [];
-        } catch (
-          error
-        ) {
-          console.error(
-            `[Provider:${provider.id}] Home failed:`,
-            error.message
-          );
-
-          return [];
-        }
-      })()
-    );
-  }
-
-  if (BRIDGE_URL) {
-    tasks.push(
-      bridgeHome(
-        options
-      ).catch(
-        error => {
-          console.error(
-            "[CloudStream Home]",
-            error.message
+            `[CloudStream Search] ${error.message}`
           );
 
           return [];
@@ -2511,6 +2496,87 @@ async function homeAllProviders(
     results
       .flat()
       .filter(Boolean),
+
+    item =>
+      `${normalizeExtensionName(
+        item.providerId
+      )}:${slug(
+        item.title
+      )}:${item.sourceId || item.id}`
+  );
+}
+
+/* ============================================================
+   HOME
+============================================================ */
+
+async function homeAllProviders(
+  options = {}
+) {
+  const tasks =
+    [
+      ...providers.values()
+    ]
+      .filter(
+        provider =>
+          typeof provider.home ===
+          "function"
+      )
+      .map(
+        async provider => {
+          try {
+            const result =
+              await provider.home(
+                options
+              );
+
+            return Array.isArray(
+              result
+            )
+              ? result
+                  .map(
+                    normalizeMediaItem
+                  )
+                  .filter(Boolean)
+              : [];
+          } catch (
+            error
+          ) {
+            console.error(
+              `[Provider:${provider.id}] Home: ${error.message}`
+            );
+
+            return [];
+          }
+        }
+      );
+
+  if (BRIDGE_URL) {
+    tasks.push(
+      bridgeHome(
+        options
+      ).catch(
+        error => {
+          console.error(
+            `[CloudStream Home] ${error.message}`
+          );
+
+          return [];
+        }
+      )
+    );
+  }
+
+  const results =
+    await Promise.all(
+      tasks
+    );
+
+  return uniqueBy(
+    results
+      .flat()
+      .filter(Boolean),
+
     item =>
       `${normalizeExtensionName(
         item.providerId
@@ -2519,40 +2585,37 @@ async function homeAllProviders(
 }
 
 /* ============================================================
-   PROVIDER API
+   PROVIDERS API
 ============================================================ */
 
 app.get(
   "/api/providers",
   (req, res) => {
     const result =
-      [];
+      [
+        ...providers.values()
+      ].map(
+        provider => ({
+          id:
+            provider.id,
 
-    for (
-      const provider of
-        providers.values()
-    ) {
-      result.push({
-        id:
-          provider.id,
+          name:
+            provider.name,
 
-        name:
-          provider.name,
+          type:
+            provider.type ||
+            "provider",
 
-        type:
-          provider.type ||
-          "provider",
+          cloudstream:
+            false,
 
-        cloudstream:
-          false,
-
-        playable:
-          typeof provider.sources ===
-            "function" ||
-          typeof provider.load ===
-            "function"
-      });
-    }
+          playable:
+            typeof provider.sources ===
+              "function" ||
+            typeof provider.load ===
+              "function"
+        })
+      );
 
     if (BRIDGE_URL) {
       for (
@@ -2609,6 +2672,13 @@ app.get(
           )
       );
 
+    const extensions =
+      Array.isArray(
+        extensionState.extensions
+      )
+        ? extensionState.extensions
+        : [];
+
     res.json({
       ok:
         true,
@@ -2620,31 +2690,20 @@ app.get(
         extensionState.repositories,
 
       count:
-        Array.isArray(
-          extensionState.extensions
-        )
-          ? extensionState.extensions.length
-          : 0,
+        extensions.length,
 
       enabledCount:
         enabled.size,
 
       bridgeConfigured:
-        Boolean(
-          BRIDGE_URL
-        ),
+        Boolean(BRIDGE_URL),
 
       bridgeUrl:
-        BRIDGE_URL,
+        BRIDGE_URL ||
+        null,
 
       extensions:
-        (
-          Array.isArray(
-            extensionState.extensions
-          )
-            ? extensionState.extensions
-            : []
-        ).map(
+        extensions.map(
           extension => ({
             ...extension,
 
@@ -2709,7 +2768,7 @@ app.post(
 );
 
 /* ============================================================
-   SEARCH
+   SEARCH API
 ============================================================ */
 
 app.get(
@@ -2743,11 +2802,11 @@ app.get(
 
             limit:
               Math.min(
-                Number(
-                  req.query.limit ||
+                toPositiveInt(
+                  req.query.limit,
                   50
                 ),
-                100
+                MAX_RESULTS
               )
           }
         );
@@ -2785,7 +2844,7 @@ app.get(
         error
       );
 
-      res.status(500).json({
+      res.status(502).json({
         ok:
           false,
 
@@ -2797,7 +2856,7 @@ app.get(
 );
 
 /* ============================================================
-   LIBRARY
+   LIBRARY API
 ============================================================ */
 
 app.get(
@@ -2815,22 +2874,17 @@ app.get(
         const home =
           await homeAllProviders({
             limit:
-              100
+              MAX_RESULTS
           });
 
-        if (
-          home.length
-        ) {
-          mergeIntoLibrary(
-            home
-          );
-        }
+        mergeIntoLibrary(
+          home
+        );
       } catch (
         error
       ) {
         console.error(
-          "[Library]",
-          error.message
+          `[Library] ${error.message}`
         );
       }
     }
@@ -2841,19 +2895,14 @@ app.get(
         "all"
       ).toLowerCase();
 
-    let results =
-      mediaLibrary;
-
-    if (
-      type !== "all"
-    ) {
-      results =
-        results.filter(
-          item =>
-            item.type ===
-            type
-        );
-    }
+    const results =
+      type === "all"
+        ? mediaLibrary
+        : mediaLibrary.filter(
+            item =>
+              item.type ===
+              type
+          );
 
     res.json({
       ok:
@@ -2871,39 +2920,35 @@ app.get(
 );
 
 /* ============================================================
-   SYNC EVERYTHING
+   FULL SYNC
 ============================================================ */
 
 app.post(
   "/api/sync",
   async (req, res) => {
     try {
-      const extensions =
+      const state =
         await syncExtensions();
 
       const home =
         await homeAllProviders({
           limit:
-            100
+            MAX_RESULTS
         });
 
-      if (
-        home.length
-      ) {
-        mergeIntoLibrary(
-          home
-        );
-      }
+      mergeIntoLibrary(
+        home
+      );
 
       res.json({
         ok:
           true,
 
         extensions:
-          extensions.extensions.length,
+          state.extensions.length,
 
         enabledExtensions:
-          extensions.enabledExtensions.length,
+          state.enabledExtensions.length,
 
         library:
           mediaLibrary.length,
@@ -2919,7 +2964,7 @@ app.post(
         error
       );
 
-      res.status(500).json({
+      res.status(502).json({
         ok:
           false,
 
@@ -2934,19 +2979,67 @@ app.post(
    TITLE
 ============================================================ */
 
+function findLibraryItem(
+  id
+) {
+  return (
+    mediaLibrary.find(
+      item =>
+        item.id ===
+        id
+    ) ||
+    null
+  );
+}
+
+async function loadItem(
+  item
+) {
+  const cloudstreamExtension =
+    findExtension(
+      item.providerId
+    ) ||
+    findExtension(
+      item.providerName
+    );
+
+  if (
+    BRIDGE_URL &&
+    cloudstreamExtension
+  ) {
+    return bridgeLoad(
+      item
+    );
+  }
+
+  const provider =
+    providers.get(
+      item.providerId
+    );
+
+  if (
+    provider &&
+    typeof provider.load ===
+      "function"
+  ) {
+    return normalizeMediaItem(
+      await provider.load(
+        item
+      )
+    );
+  }
+
+  return item;
+}
+
 app.get(
   "/api/title/:id",
   async (req, res) => {
-    const id =
-      safeString(
-        req.params.id
-      );
-
     const item =
-      mediaLibrary.find(
-        candidate =>
-          candidate.id ===
-          id
+      findLibraryItem(
+        safeString(
+          req.params.id
+        )
       );
 
     if (!item) {
@@ -2960,93 +3053,30 @@ app.get(
     }
 
     try {
-      /*
-       * CloudStream gets first priority.
-       */
-      if (
-        BRIDGE_URL &&
-        item.providerId
-      ) {
-        try {
-          const loaded =
-            await bridgeLoad(
-              item
-            );
-
-          if (
-            loaded
-          ) {
-            /*
-             * Update the cached item with
-             * CloudStream's LoadResponse data.
-             */
-            mergeIntoLibrary([
-              loaded
-            ]);
-
-            return res.json({
-              ok:
-                true,
-
-              item:
-                loaded
-            });
-          }
-        } catch (
-          error
-        ) {
-          console.error(
-            "[CloudStream Load]",
-            error.message
-          );
-        }
-      }
-
-      /*
-       * Native provider fallback.
-       */
-      const provider =
-        providers.get(
-          item.providerId
+      const loaded =
+        await loadItem(
+          item
         );
 
-      if (
-        provider &&
-        typeof provider.load ===
-          "function"
-      ) {
-        const loaded =
-          await provider.load(
-            item
-          );
+      mergeIntoLibrary([
+        loaded
+      ]);
 
-        return res.json({
-          ok:
-            true,
-
-          item:
-            normalizeBridgeLoad(
-              loaded,
-              item
-            )
-        });
-      }
-
-      return res.json({
+      res.json({
         ok:
           true,
 
-        item
+        item:
+          loaded
       });
     } catch (
       error
     ) {
       console.error(
-        "[Title]",
-        error
+        `[Title] ${error.message}`
       );
 
-      res.status(500).json({
+      res.status(502).json({
         ok:
           false,
 
@@ -3064,16 +3094,11 @@ app.get(
 app.get(
   "/api/sources/:id",
   async (req, res) => {
-    const id =
-      safeString(
-        req.params.id
-      );
-
     const item =
-      mediaLibrary.find(
-        candidate =>
-          candidate.id ===
-          id
+      findLibraryItem(
+        safeString(
+          req.params.id
+        )
       );
 
     if (!item) {
@@ -3087,184 +3112,123 @@ app.get(
     }
 
     try {
-      /*
-       * ======================================================
-       * CLOUDSTREAM
-       *
-       * CloudStream's loadLinks() requires the
-       * LoadResponse data string.
-       *
-       * Therefore:
-       *
-       * 1. Load the title.
-       * 2. Select the requested episode if applicable.
-       * 3. Extract episode.data.
-       * 4. Pass that data to /sources.
-       * ======================================================
-       */
+      const cloudstreamExtension =
+        findExtension(
+          item.providerId
+        ) ||
+        findExtension(
+          item.providerName
+        );
+
       if (
         BRIDGE_URL &&
-        item.providerId
+        cloudstreamExtension
       ) {
-        try {
-          let loaded =
-            null;
+        const loaded =
+          await bridgeLoad(
+            item
+          );
 
-          try {
-            loaded =
-              await bridgeLoad(
-                item
-              );
-          } catch (
-            loadError
-          ) {
-            console.error(
-              "[CloudStream Load Before Sources]",
-              loadError.message
-            );
-          }
+        let data =
+          safeString(
+            req.query.data
+          ) ||
+          safeString(
+            loaded?.data
+          );
 
-          const requestedSeason =
+        /*
+         * TV/anime data is normally stored
+         * on the selected episode.
+         */
+        if (
+          !data &&
+          Array.isArray(
+            loaded?.episodes
+          ) &&
+          loaded.episodes.length
+        ) {
+          const season =
             Number(
               req.query.season
             );
 
-          const requestedEpisode =
+          const episode =
             Number(
               req.query.episode
             );
 
-          let data =
-            safeString(
-              req.query.data
-            );
+          let selected =
+            loaded.episodes[0];
 
-          /*
-           * If the frontend supplied the actual
-           * CloudStream data, use it directly.
-           */
           if (
-            !data
-          ) {
-            data =
-              safeString(
-                loaded?.data
-              );
-          }
-
-          /*
-           * For TV/anime content, the required
-           * data normally lives on the episode.
-           */
-          if (
-            !data &&
-            loaded &&
-            Array.isArray(
-              loaded.episodes
+            Number.isFinite(
+              season
             ) &&
-            loaded.episodes.length
+            Number.isFinite(
+              episode
+            )
           ) {
-            let episode =
-              loaded.episodes[0];
-
-            if (
-              Number.isFinite(
-                requestedSeason
-              ) &&
-              Number.isFinite(
-                requestedEpisode
-              )
-            ) {
-              episode =
-                loaded.episodes.find(
-                  candidate =>
-                    Number(
-                      candidate?.season
-                    ) ===
-                      requestedSeason &&
-                    Number(
-                      candidate?.episode
-                    ) ===
-                      requestedEpisode
-                ) ||
-                episode;
-            }
-
-            data =
-              safeString(
-                episode?.data
-              );
+            selected =
+              loaded.episodes.find(
+                entry =>
+                  Number(
+                    entry?.season
+                  ) === season &&
+                  Number(
+                    entry?.episode
+                  ) === episode
+              ) ||
+              selected;
           }
 
-          /*
-           * Finally fall back to the cached
-           * item's data.
-           */
-          if (
-            !data
-          ) {
-            data =
-              safeString(
-                item.data
-              );
-          }
-
-          if (
-            data
-          ) {
-            const sourceItem =
-              loaded ||
-              item;
-
-            const sources =
-              await bridgeSources(
-                sourceItem,
-                data
-              );
-
-            /*
-             * If the runtime found sources,
-             * return them immediately.
-             */
-            if (
-              sources.length
-            ) {
-              return res.json({
-                ok:
-                  true,
-
-                provider:
-                  sourceItem.providerName ||
-                  item.providerName,
-
-                sources
-              });
-            }
-
-            console.warn(
-              "[CloudStream Sources] Runtime returned no sources"
+          data =
+            safeString(
+              selected?.data
             );
-          } else {
-            console.warn(
-              "[CloudStream Sources] No CloudStream data available"
+        }
+
+        if (!data) {
+          data =
+            safeString(
+              item.data
             );
-          }
-        } catch (
-          error
-        ) {
-          console.error(
-            "[CloudStream Sources]",
-            error.message
+        }
+
+        if (!data) {
+          throw new Error(
+            "CloudStream LoadResponse data is missing"
           );
         }
+
+        const sources =
+          await bridgeSources(
+            loaded ||
+              item,
+            data
+          );
+
+        if (!sources.length) {
+          throw new Error(
+            "CloudStream returned no playable sources"
+          );
+        }
+
+        return res.json({
+          ok:
+            true,
+
+          provider:
+            loaded.providerName ||
+            item.providerName,
+
+          sources
+        });
       }
 
       /*
-       * ======================================================
-       * NATIVE PROVIDER FALLBACK
-       * ======================================================
+       * Native provider fallback.
        */
-
       const provider =
         providers.get(
           item.providerId
@@ -3314,8 +3278,7 @@ app.get(
 
           sources:
             normalizeSources(
-              loaded?.sources ||
-                [],
+              loaded?.sources,
               item
             )
         });
@@ -3335,8 +3298,7 @@ app.get(
       error
     ) {
       console.error(
-        "[Sources]",
-        error
+        `[Sources] ${error.message}`
       );
 
       res.status(502).json({
@@ -3363,6 +3325,13 @@ app.get(
 app.get(
   "/api/health",
   (req, res) => {
+    const extensions =
+      Array.isArray(
+        extensionState.extensions
+      )
+        ? extensionState.extensions
+        : [];
+
     const enabled =
       getEnabledExtensions();
 
@@ -3379,42 +3348,36 @@ app.get(
       uptime:
         process.uptime(),
 
-      bridge:
-        {
-          configured:
-            Boolean(
-              BRIDGE_URL
-            ),
+      bridge: {
+        configured:
+          Boolean(
+            BRIDGE_URL
+          ),
 
-          url:
-            BRIDGE_URL ||
-            null,
+        url:
+          BRIDGE_URL ||
+          null,
 
-          timeoutMs:
-            BRIDGE_TIMEOUT_MS
-        },
+        timeoutMs:
+          BRIDGE_TIMEOUT_MS
+      },
 
-      extensions:
-        {
-          discovered:
-            Array.isArray(
-              extensionState.extensions
-            )
-              ? extensionState.extensions.length
-              : 0,
+      extensions: {
+        discovered:
+          extensions.length,
 
-          enabled:
-            enabled.length,
+        enabled:
+          enabled.length,
 
-          enabledNames:
-            enabled.map(
-              extension =>
-                extension.name
-            ),
+        enabledNames:
+          enabled.map(
+            extension =>
+              extension.name
+          ),
 
-          updatedAt:
-            extensionState.updatedAt
-        },
+        updatedAt:
+          extensionState.updatedAt
+      },
 
       providers:
         [
@@ -3444,6 +3407,40 @@ app.get(
         "index.html"
       )
     );
+  }
+);
+
+/* ============================================================
+   ERROR HANDLER
+============================================================ */
+
+app.use(
+  (
+    error,
+    req,
+    res,
+    next
+  ) => {
+    console.error(
+      `[HTTP] ${error.message}`
+    );
+
+    if (
+      res.headersSent
+    ) {
+      return next(
+        error
+      );
+    }
+
+    res.status(400).json({
+      ok:
+        false,
+
+      error:
+        error.message ||
+        "Bad request"
+    });
   }
 );
 
@@ -3480,57 +3477,58 @@ app.use(
 let lastExtensionSync =
   0;
 
-let startupComplete =
-  false;
+async function ensureExtensionSync() {
+  await syncExtensions();
 
-async function startupSync() {
+  lastExtensionSync =
+    Date.now();
+
+  return extensionState;
+}
+
+async function refreshLibrary() {
   try {
-    console.log(
-      "================================================"
-    );
-
-    console.log(
-      "[Startup] Mediav2 starting"
-    );
-
-    console.log(
-      `[Startup] CloudStream bridge: ${
-        BRIDGE_URL || "disabled"
-      }`
-    );
-
-    console.log(
-      "[Startup] Syncing CloudStream repositories..."
-    );
-
-    await syncExtensions();
-
-    lastExtensionSync =
-      Date.now();
-
-    /*
-     * Populate the library from actual
-     * provider home results.
-     */
     const home =
       await homeAllProviders({
         limit:
-          100
+          MAX_RESULTS
       });
 
-    if (
-      home.length
-    ) {
-      mergeIntoLibrary(
-        home
-      );
-    }
+    mergeIntoLibrary(
+      home
+    );
+  } catch (
+    error
+  ) {
+    console.error(
+      `[Library Refresh] ${error.message}`
+    );
+  }
+}
 
-    startupComplete =
-      true;
+async function startupSync() {
+  console.log(
+    "=============================================="
+  );
+
+  console.log(
+    `[Startup] Mediav2 on port ${PORT}`
+  );
+
+  console.log(
+    `[Startup] CloudStream bridge: ${
+      BRIDGE_URL ||
+      "disabled"
+    }`
+  );
+
+  try {
+    await ensureExtensionSync();
+
+    await refreshLibrary();
 
     console.log(
-      `[Startup] Library contains ${mediaLibrary.length} items.`
+      `[Startup] Library: ${mediaLibrary.length} items`
     );
 
     console.log(
@@ -3544,29 +3542,21 @@ async function startupSync() {
         "none"
       }`
     );
-
-    console.log(
-      "================================================"
-    );
   } catch (
     error
   ) {
     console.error(
-      "[Startup Sync]",
-      error.message
+      `[Startup] ${error.message}`
     );
-
-    /*
-     * Keep the HTTP server alive even when
-     * an external repository temporarily fails.
-     */
-    startupComplete =
-      true;
   }
+
+  console.log(
+    "=============================================="
+  );
 }
 
 /* ============================================================
-   SCHEDULED EXTENSION SYNC
+   SCHEDULED SYNC
 ============================================================ */
 
 setInterval(
@@ -3587,65 +3577,83 @@ setInterval(
 
     try {
       console.log(
-        "[Scheduled Extension Sync] Starting..."
+        "[Scheduled Sync] Starting..."
       );
 
-      await syncExtensions();
+      await ensureExtensionSync();
 
-      lastExtensionSync =
-        Date.now();
-
-      /*
-       * Refresh the library after extension
-       * metadata has been updated.
-       */
-      const home =
-        await homeAllProviders({
-          limit:
-            100
-        });
-
-      if (
-        home.length
-      ) {
-        mergeIntoLibrary(
-          home
-        );
-      }
+      await refreshLibrary();
 
       console.log(
-        "[Scheduled Extension Sync] Complete."
+        "[Scheduled Sync] Complete."
       );
     } catch (
       error
     ) {
       console.error(
-        "[Scheduled Extension Sync]",
-        error.message
+        `[Scheduled Sync] ${error.message}`
       );
     }
   },
   15 * 60 * 1000
-);
+).unref();
 
 /* ============================================================
    SERVER
 ============================================================ */
 
-app.listen(
-  PORT,
-  async () => {
-    console.log(
-      `Mediav2 listening on port ${PORT}`
-    );
+const server =
+  app.listen(
+    PORT,
+    () => {
+      console.log(
+        `Mediav2 listening on port ${PORT}`
+      );
 
-    await startupSync();
-  }
-);
+      startupSync();
+    }
+  );
 
 /* ============================================================
-   PROCESS SAFETY
+   SHUTDOWN
 ============================================================ */
+
+function shutdown(
+  signal
+) {
+  console.log(
+    `[Process] ${signal} received`
+  );
+
+  server.close(
+    () => {
+      process.exit(0);
+    }
+  );
+
+  setTimeout(
+    () => {
+      process.exit(1);
+    },
+    10000
+  ).unref();
+}
+
+process.on(
+  "SIGTERM",
+  () =>
+    shutdown(
+      "SIGTERM"
+    )
+);
+
+process.on(
+  "SIGINT",
+  () =>
+    shutdown(
+      "SIGINT"
+    )
+);
 
 process.on(
   "unhandledRejection",
@@ -3664,5 +3672,7 @@ process.on(
       "[Process] Uncaught exception:",
       error
     );
+
+    process.exit(1);
   }
 );
