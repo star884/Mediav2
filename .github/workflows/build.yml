@@ -4,14 +4,12 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
-  STREAMPLAY_REPOSITORY: tpadev/phiser-streamplay
   STREAMPLAY_ARTIFACT_URL: https://raw.githubusercontent.com/tpadev/phiser-streamplay/builds/StreamPlay.cs3
   STREAMPLAY_MANIFEST_URL: https://raw.githubusercontent.com/tpadev/phiser-streamplay/builds/plugins.json
 
@@ -20,67 +18,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ---------------------------------------------------------
-      # Checkout Mediav2
-      # ---------------------------------------------------------
-      - name: Checkout
+      - name: Checkout Mediav2
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
-      # ---------------------------------------------------------
-      # Java
-      # ---------------------------------------------------------
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      # ---------------------------------------------------------
-      # Gradle
-      # ---------------------------------------------------------
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Make Gradle executable
-        run: chmod +x ./gradlew
-
-      # ---------------------------------------------------------
-      # Build Mediav2's own extensions
-      # ---------------------------------------------------------
-      - name: Build extensions
-        run: ./gradlew make
-
-      # ---------------------------------------------------------
-      # Verify normal build
-      # ---------------------------------------------------------
-      - name: Verify generated files
-        shell: bash
-        run: |
-          set -e
-
-          echo "Generated files:"
-          find build -maxdepth 4 -type f -print || true
-
-          test -d build
-
-      # ---------------------------------------------------------
-      # Install tools used for manifest merging
-      # ---------------------------------------------------------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      # ---------------------------------------------------------
-      # Download the official StreamPlay artifact
-      #
-      # We intentionally do NOT reimplement StreamPlay here.
-      # The official .cs3 remains the executable CloudStream plugin.
-      # ---------------------------------------------------------
-      - name: Download StreamPlay
-        shell: bash
+      - name: Inspect repository
+        run: |
+          echo "Repository:"
+          pwd
+          echo
+          echo "Files:"
+          find . -maxdepth 2 -type f \
+            ! -path './.git/*' \
+            | sort
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f package.json ]; then
+            npm install
+          else
+            echo "No package.json found."
+          fi
+
+      - name: Download official StreamPlay
         run: |
           set -euo pipefail
 
@@ -98,14 +66,10 @@ jobs:
 
           test -s build/StreamPlay.cs3
 
-          echo "StreamPlay downloaded:"
+          echo "Downloaded StreamPlay:"
           ls -lh build/StreamPlay.cs3
 
-      # ---------------------------------------------------------
-      # Download the official StreamPlay manifest
-      # ---------------------------------------------------------
       - name: Download StreamPlay manifest
-        shell: bash
         run: |
           set -euo pipefail
 
@@ -121,50 +85,7 @@ jobs:
 
           test -s /tmp/streamplay-plugins.json
 
-          node -e '
-            const fs = require("fs");
-
-            const data = JSON.parse(
-              fs.readFileSync("/tmp/streamplay-plugins.json", "utf8")
-            );
-
-            if (!Array.isArray(data)) {
-              throw new Error("Upstream plugins.json is not an array");
-            }
-
-            const streamPlay = data.find(p =>
-              String(p?.internalName || "").toLowerCase() === "streamplay" ||
-              String(p?.name || "").toLowerCase() === "streamplay"
-            );
-
-            if (!streamPlay) {
-              throw new Error("StreamPlay was not found in upstream plugins.json");
-            }
-
-            console.log(
-              JSON.stringify(
-                {
-                  internalName: streamPlay.internalName,
-                  name: streamPlay.name,
-                  version: streamPlay.version,
-                  fileSize: streamPlay.fileSize,
-                  fileHash: streamPlay.fileHash,
-                  repositoryUrl: streamPlay.repositoryUrl
-                },
-                null,
-                2
-              )
-            );
-          '
-
-      # ---------------------------------------------------------
-      # Merge StreamPlay into Mediav2's generated plugins.json
-      #
-      # Existing Mediav2 extensions are preserved.
-      # StreamPlay is replaced by the newest upstream entry.
-      # ---------------------------------------------------------
-      - name: Integrate StreamPlay into plugin manifest
-        shell: bash
+      - name: Create extension repository
         run: |
           set -euo pipefail
 
@@ -172,33 +93,21 @@ jobs:
           const fs = require("fs");
           const crypto = require("crypto");
 
-          const localPath = "build/plugins.json";
+          fs.mkdirSync("build", { recursive: true });
+
+          const artifactPath = "build/StreamPlay.cs3";
           const upstreamPath = "/tmp/streamplay-plugins.json";
 
-          if (!fs.existsSync(localPath)) {
-            throw new Error(
-              "Mediav2 did not generate build/plugins.json"
-            );
+          if (!fs.existsSync(artifactPath)) {
+            throw new Error("StreamPlay.cs3 was not downloaded");
           }
-
-          const local = JSON.parse(
-            fs.readFileSync(localPath, "utf8")
-          );
 
           const upstream = JSON.parse(
             fs.readFileSync(upstreamPath, "utf8")
           );
 
-          if (!Array.isArray(local)) {
-            throw new Error(
-              "Mediav2 build/plugins.json must contain an array"
-            );
-          }
-
           if (!Array.isArray(upstream)) {
-            throw new Error(
-              "Upstream plugins.json must contain an array"
-            );
+            throw new Error("Upstream plugins.json is not an array");
           }
 
           const streamPlay = upstream.find(plugin => {
@@ -216,207 +125,107 @@ jobs:
 
           if (!streamPlay) {
             throw new Error(
-              "StreamPlay was not found in upstream manifest"
+              "StreamPlay was not found in upstream plugins.json"
             );
           }
 
-          const artifactPath = "build/StreamPlay.cs3";
-
-          if (!fs.existsSync(artifactPath)) {
-            throw new Error(
-              "build/StreamPlay.cs3 does not exist"
-            );
-          }
-
-          const stat = fs.statSync(artifactPath);
-
-          const fileHash = crypto
-            .createHash("sha256")
-            .update(fs.readFileSync(artifactPath))
-            .digest("hex");
-
-          /*
-           * Point StreamPlay at YOUR Mediav2 builds branch.
-           *
-           * GITHUB_REPOSITORY is automatically:
-           * star884/Mediav2
-           */
           const repository =
             process.env.GITHUB_REPOSITORY;
 
-          if (!repository) {
-            throw new Error(
-              "GITHUB_REPOSITORY is unavailable"
-            );
-          }
+          const file =
+            fs.readFileSync(artifactPath);
 
-          const adapted = {
+          const stat =
+            fs.statSync(artifactPath);
+
+          const hash =
+            crypto
+              .createHash("sha256")
+              .update(file)
+              .digest("hex");
+
+          const plugin = {
             ...streamPlay,
 
-            name:
-              streamPlay.name || "StreamPlay",
+            name: streamPlay.name || "StreamPlay",
+            internalName: streamPlay.internalName || "StreamPlay",
 
-            internalName:
-              streamPlay.internalName || "StreamPlay",
-
-            /*
-             * The actual executable plugin is now hosted
-             * by Mediav2's builds branch.
-             */
             url:
               `https://raw.githubusercontent.com/${repository}/builds/StreamPlay.cs3`,
 
-            /*
-             * Keep the official project as the source repository.
-             */
-            repositoryUrl:
-              streamPlay.repositoryUrl ||
-              `https://github.com/${process.env.STREAMPLAY_REPOSITORY}`,
-
-            /*
-             * Keep these synchronized with the artifact that
-             * is actually published by this workflow.
-             */
-            fileSize:
-              stat.size,
-
-            fileHash:
-              fileHash
+            fileSize: stat.size,
+            fileHash: hash
           };
 
-          /*
-           * Remove an older StreamPlay entry from Mediav2.
-           */
-          const filtered = local.filter(plugin => {
-            const internalName =
-              String(plugin?.internalName || "").toLowerCase();
-
-            const name =
-              String(plugin?.name || "").toLowerCase();
-
-            return (
-              internalName !== "streamplay" &&
-              name !== "streamplay"
-            );
-          });
-
-          /*
-           * StreamPlay goes first so it is easy to verify.
-           */
-          const merged = [
-            adapted,
-            ...filtered
-          ];
-
-          /*
-           * Remove duplicate plugins while preserving order.
-           */
-          const seen = new Set();
-
-          const finalPlugins = merged.filter(plugin => {
-            const key = String(
-              plugin?.internalName ||
-              plugin?.name ||
-              plugin?.url ||
-              ""
-            ).toLowerCase();
-
-            if (!key || seen.has(key)) {
-              return false;
-            }
-
-            seen.add(key);
-            return true;
-          });
-
           fs.writeFileSync(
-            localPath,
-            JSON.stringify(finalPlugins, null, 2) + "\n",
-            "utf8"
+            "build/plugins.json",
+            JSON.stringify([plugin], null, 2) + "\n"
           );
 
           console.log(
-            `Integrated StreamPlay v${adapted.version || "unknown"}`
-          );
-
-          console.log(
-            `StreamPlay size: ${adapted.fileSize} bytes`
-          );
-
-          console.log(
-            `StreamPlay SHA-256: ${adapted.fileHash}`
-          );
-
-          console.log(
-            `StreamPlay URL: ${adapted.url}`
-          );
-
-          console.log(
-            `Total plugins: ${finalPlugins.length}`
+            JSON.stringify(plugin, null, 2)
           );
           NODE
 
-      # ---------------------------------------------------------
-      # Final validation
-      # ---------------------------------------------------------
-      - name: Validate final plugin repository
-        shell: bash
+      - name: Create repo manifest
+        run: |
+          cat > build/repo.json <<'EOF'
+          {
+            "name": "Mediav2 Extensions",
+            "description": "CloudStream extensions for Mediav2",
+            "manifestVersion": 1,
+            "pluginLists": [
+              "https://raw.githubusercontent.com/star884/Mediav2/builds/plugins.json"
+            ]
+          }
+          EOF
+
+      - name: Validate build
         run: |
           set -euo pipefail
 
           test -s build/StreamPlay.cs3
           test -s build/plugins.json
+          test -s build/repo.json
 
           node <<'NODE'
           const fs = require("fs");
 
           const plugins =
             JSON.parse(
-              fs.readFileSync(
-                "build/plugins.json",
-                "utf8"
-              )
+              fs.readFileSync("build/plugins.json", "utf8")
             );
 
           if (!Array.isArray(plugins)) {
-            throw new Error(
-              "Final plugins.json is not an array"
-            );
+            throw new Error("plugins.json is not an array");
           }
 
           const streamPlay =
-            plugins.find(plugin =>
-              String(
-                plugin?.internalName || ""
-              ).toLowerCase() === "streamplay"
+            plugins.find(
+              p =>
+                String(
+                  p.internalName || ""
+                ).toLowerCase() === "streamplay"
             );
 
           if (!streamPlay) {
             throw new Error(
-              "Final plugins.json does not contain StreamPlay"
+              "StreamPlay missing from plugins.json"
             );
           }
 
           if (
-            !String(
-              streamPlay.url || ""
-            ).includes(
-              "/builds/StreamPlay.cs3"
-            )
+            streamPlay.url !==
+            "https://raw.githubusercontent.com/star884/Mediav2/builds/StreamPlay.cs3"
           ) {
             throw new Error(
-              "StreamPlay does not point to Mediav2's builds artifact"
+              "StreamPlay URL is incorrect"
             );
           }
 
-          if (
-            !Number.isFinite(
-              Number(streamPlay.fileSize)
-            ) ||
-            Number(streamPlay.fileSize) <= 0
-          ) {
+          if (!streamPlay.fileSize) {
             throw new Error(
-              "StreamPlay fileSize is invalid"
+              "StreamPlay fileSize missing"
             );
           }
 
@@ -426,31 +235,18 @@ jobs:
             )
           ) {
             throw new Error(
-              "StreamPlay fileHash is not a SHA-256 hash"
+              "StreamPlay SHA-256 hash is invalid"
             );
           }
 
-          console.log(
-            "StreamPlay manifest validation: OK"
-          );
-
-          console.log(
-            JSON.stringify(
-              streamPlay,
-              null,
-              2
-            )
-          );
+          console.log("Mediav2 extension repository: OK");
           NODE
 
           echo
           echo "Final build:"
-          find build -maxdepth 2 -type f -printf '%p %s bytes\n' | sort
+          find build -type f -printf '%p - %s bytes\n' | sort
 
-      # ---------------------------------------------------------
-      # Publish everything to builds branch
-      # ---------------------------------------------------------
-      - name: Publish extension repository
+      - name: Publish builds branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
