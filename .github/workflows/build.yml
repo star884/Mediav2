@@ -1,60 +1,45 @@
-name: Build and Bundle Extensions for Render
+name: Build Mediav2 Extensions
 
 on:
   push:
     branches:
       - main
 
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          distribution: temurin
+          java-version: "17"
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
+        uses: gradle/actions/setup-gradle@v4
 
-      - name: Make Gradle Executable
+      - name: Make Gradle executable
         run: chmod +x ./gradlew
 
-      - name: Compile CloudStream Plugins
+      - name: Build extensions
         run: ./gradlew make
 
-      - name: Create Web Landing Page
+      - name: Verify generated files
         run: |
-          cat << 'EOF' > build/index.html
-          <!DOCTYPE html>
-          <html>
-          <head>
-              <title>CloudStream Repository</title>
-              <style>
-                  body { font-family: sans-serif; background: #121212; color: #fff; padding: 2rem; }
-                  a { color: #00e676; text-decoration: none; font-size: 1.2rem; }
-                  .container { max-width: 600px; margin: auto; }
-                  .card { background: #1e1e1e; padding: 1.5rem; border-radius: 8px; margin-top: 1rem; }
-              </style>
-          </head>
-          <body>
-              <div class="container">
-                  <h1>CloudStream Extension Repository</h1>
-                  <div class="card">
-                      <p>Repository Manifest URL:</p>
-                      <a href="plugins.json">plugins.json</a>
-                  </div>
-              </div>
-          </body>
-          </html>
-          EOF
+          echo "Generated files:"
+          find build -maxdepth 4 -type f -print || true
 
-      - name: Publish Built Files to 'builds' Branch
-        uses: peaceiris/actions-gh-pages@v3
+      - name: Publish extension repository
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./build
