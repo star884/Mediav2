@@ -1,7 +1,6 @@
 {
-  "name": "render-web-streamer",
+  "name": "auto-stream-library",
   "version": "1.0.0",
-  "description": "Web streamer backend for movie and anime providers",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -10,6 +9,7 @@
     "axios": "^1.6.8",
     "cheerio": "^1.0.0-rc.12",
     "cors": "^2.8.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "node-cron": "^3.0.3"
   }
 }
