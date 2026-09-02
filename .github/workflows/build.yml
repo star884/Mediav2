@@ -2,12 +2,25 @@ name: Build Mediav2 CloudStream Runtime
 
 on:
   workflow_dispatch:
+
   push:
     branches:
       - main
 
+    paths:
+      - "runtime/**"
+      - ".github/workflows/build.yml"
+      - "Dockerfile"
+      - "start.sh"
+      - "server.js"
+      - "package.json"
+
 permissions:
   contents: write
+
+concurrency:
+  group: mediav2-runtime-build
+  cancel-in-progress: true
 
 jobs:
   build-runtime:
@@ -16,11 +29,14 @@ jobs:
     steps:
       - name: Checkout Mediav2
         uses: actions/checkout@v4
+        with:
+          path: mediav2
 
-      - name: Checkout JVM CloudStream runtime
+      - name: Checkout CloudStream JVM runtime
         uses: actions/checkout@v4
         with:
           repository: DHR-Store/CS-3
+          ref: main
           path: runtime-host
           fetch-depth: 1
 
@@ -28,53 +44,114 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: "21"
           cache: gradle
 
-      - name: Copy Mediav2 runtime
-        shell: bash
-        run: |
-          mkdir -p runtime-host/mediav2-runtime/src/main/kotlin/com/star884/mediav2/runtime
-
-          cp runtime/BridgeServer.kt \
-            runtime-host/mediav2-runtime/src/main/kotlin/com/star884/mediav2/runtime/BridgeServer.kt
-
-          cp runtime/build.gradle.kts \
-            runtime-host/mediav2-runtime/build.gradle.kts
-
-      - name: Register runtime module
-        shell: bash
+      - name: Install Mediav2 runtime module
         working-directory: runtime-host
+        shell: bash
         run: |
+          set -euo pipefail
+
+          rm -rf mediav2-runtime
+
+          mkdir -p \
+            mediav2-runtime/src/main/kotlin/com/star884/mediav2/runtime
+
+          cp \
+            ../mediav2/runtime/BridgeServer.kt \
+            mediav2-runtime/src/main/kotlin/com/star884/mediav2/runtime/BridgeServer.kt
+
+          cp \
+            ../mediav2/runtime/build.gradle.kts \
+            mediav2-runtime/build.gradle.kts
+
           if ! grep -q 'include(":mediav2-runtime")' settings.gradle.kts; then
             printf '\ninclude(":mediav2-runtime")\n' >> settings.gradle.kts
           fi
 
       - name: Build runtime
         working-directory: runtime-host
+        shell: bash
         run: |
+          set -euo pipefail
+
           chmod +x ./gradlew
-          ./gradlew :mediav2-runtime:jar \
+
+          ./gradlew \
+            :mediav2-runtime:jar \
             --no-daemon \
             --stacktrace
 
-      - name: Prepare artifact
+      - name: Validate runtime
         shell: bash
         run: |
-          rm -rf build/runtime
-          mkdir -p build/runtime
+          set -euo pipefail
 
-          cp runtime-host/mediav2-runtime/build/libs/*.jar \
-            build/runtime/mediav2-runtime.jar
+          JAR="$(find runtime-host/mediav2-runtime/build/libs \
+            -maxdepth 1 \
+            -type f \
+            -name '*.jar' \
+            ! -name '*-plain.jar' \
+            | head -n 1)"
 
-          ls -lh build/runtime
+          test -n "$JAR"
+          test -s "$JAR"
+
+          echo "Runtime:"
+          ls -lh "$JAR"
+
+      - name: Prepare build output
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          rm -rf mediav2/build
+          mkdir -p mediav2/build/runtime
+
+          JAR="$(find runtime-host/mediav2-runtime/build/libs \
+            -maxdepth 1 \
+            -type f \
+            -name '*.jar' \
+            ! -name '*-plain.jar' \
+            | head -n 1)"
+
+          cp \
+            "$JAR" \
+            mediav2/build/runtime/mediav2-runtime.jar
+
+          sha256sum \
+            mediav2/build/runtime/mediav2-runtime.jar \
+            > mediav2/build/runtime/mediav2-runtime.jar.sha256
+
+          cat > mediav2/build/runtime/version.json <<EOF
+          {
+            "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "sourceRepository": "DHR-Store/CS-3",
+            "sourceRef": "main",
+            "artifact": "mediav2-runtime.jar"
+          }
+          EOF
 
       - name: Publish runtime
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_branch: builds
-          publish_dir: ./build
+          publish_dir: ./mediav2/build
           keep_files: true
           force_orphan: false
           commit_message: "Build Mediav2 CloudStream JVM runtime"
+
+      - name: Trigger Render deployment
+        if: ${{ secrets.RENDER_DEPLOY_HOOK_URL != '' }}
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        shell: bash
+        run: |
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            -X POST \
+            "$RENDER_DEPLOY_HOOK_URL"
