@@ -1,1231 +1,1522 @@
-'use strict';
-
-const express = require('express');
-const cors = require('cors');
-const axios = require('axios');
-const path = require('path');
-const fs = require('fs');
-const crypto = require('crypto');
+const express = require("express");
+const cors = require("cors");
+const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
 
 const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
-const HOST = process.env.HOST || '0.0.0.0';
+const DATA_DIR = path.join(__dirname, "data");
+const CACHE_FILE = path.join(DATA_DIR, "cache.json");
+const EXTENSIONS_FILE = path.join(DATA_DIR, "extensions.json");
 
-const DATA_DIR = path.join(__dirname, 'data');
-const CACHE_FILE = path.join(DATA_DIR, 'cache.json');
+const CACHE_TTL_MS =
+  Number(process.env.CACHE_TTL_HOURS || 6) * 60 * 60 * 1000;
 
-const CACHE_TTL_MS = Number(
-    process.env.CACHE_TTL_MS || 30 * 60 * 1000
-);
+const REQUEST_TIMEOUT_MS =
+  Number(process.env.REQUEST_TIMEOUT_MS || 15000);
 
-const SEARCH_TIMEOUT_MS = Number(
-    process.env.SEARCH_TIMEOUT_MS || 10000
-);
+const EXTENSION_SYNC_HOURS =
+  Number(process.env.EXTENSION_SYNC_HOURS || 6);
 
-const MAX_RESULTS_PER_PROVIDER = Number(
-    process.env.MAX_RESULTS_PER_PROVIDER || 30
-);
+const BRIDGE_URL = (
+  process.env.CLOUDSTREAM_BRIDGE_URL || ""
+).replace(/\/+$/, "");
 
-const ALLOWED_ORIGINS = (
-    process.env.ALLOWED_ORIGINS || '*'
-)
-    .split(',')
-    .map(x => x.trim())
-    .filter(Boolean);
+const USER_AGENT =
+  process.env.USER_AGENT ||
+  "Mediav2/2.0 (+https://github.com/star884/Mediav2)";
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
-app.disable('x-powered-by');
+app.use(cors());
+app.use(express.json({ limit: "1mb" }));
+app.use(express.static(path.join(__dirname, "public")));
 
-app.use(express.json({ limit: '1mb' }));
+/* ============================================================
+   SAFE HELPERS
+============================================================ */
 
-app.use(
-    cors({
-        origin(origin, callback) {
-            if (!origin || ALLOWED_ORIGINS.includes('*')) {
-                return callback(null, true);
-            }
-
-            if (ALLOWED_ORIGINS.includes(origin)) {
-                return callback(null, true);
-            }
-
-            callback(new Error('CORS origin not allowed'));
-        }
-    })
-);
-
-app.use(
-    express.static(
-        path.join(__dirname, 'public'),
-        {
-            extensions: ['html']
-        }
-    )
-);
-
-/* -------------------------------------------------------------------------- */
-/* Storage                                                                     */
-/* -------------------------------------------------------------------------- */
-
-let cache = {
-    version: 1,
-    library: [],
-    entries: {},
-    updatedAt: null
-};
-
-function loadCache() {
-    try {
-        if (!fs.existsSync(CACHE_FILE)) {
-            return;
-        }
-
-        const parsed = JSON.parse(
-            fs.readFileSync(CACHE_FILE, 'utf8')
-        );
-
-        if (parsed && typeof parsed === 'object') {
-            cache = {
-                version: 1,
-                library: Array.isArray(parsed.library)
-                    ? parsed.library
-                    : [],
-                entries: parsed.entries &&
-                    typeof parsed.entries === 'object'
-                    ? parsed.entries
-                    : {},
-                updatedAt: parsed.updatedAt || null
-            };
-        }
-    } catch (error) {
-        console.error(
-            '[Storage] Failed to load cache:',
-            error.message
-        );
-    }
+function now() {
+  return new Date().toISOString();
 }
 
-function saveCache() {
-    try {
-        const temporary = `${CACHE_FILE}.tmp`;
-
-        fs.writeFileSync(
-            temporary,
-            JSON.stringify(cache, null, 2),
-            'utf8'
-        );
-
-        fs.renameSync(
-            temporary,
-            CACHE_FILE
-        );
-    } catch (error) {
-        console.error(
-            '[Storage] Failed to save cache:',
-            error.message
-        );
-    }
+function safeString(value, fallback = "") {
+  return typeof value === "string" ? value.trim() : fallback;
 }
 
-loadCache();
-
-/* -------------------------------------------------------------------------- */
-/* Helpers                                                                     */
-/* -------------------------------------------------------------------------- */
-
-function normalizeText(value) {
-    return String(value || '')
-        .normalize('NFKC')
-        .toLowerCase()
-        .replace(/[^\p{L}\p{N}]+/gu, ' ')
-        .trim()
-        .replace(/\s+/g, ' ');
+function slug(value) {
+  return safeString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 120);
 }
 
-function makeHash(value) {
-    return crypto
-        .createHash('sha1')
-        .update(String(value))
-        .digest('hex');
+function hash(value) {
+  return crypto
+    .createHash("sha256")
+    .update(String(value))
+    .digest("hex")
+    .slice(0, 24);
 }
 
-function makeStableId(providerId, value) {
-    return `${providerId}:${makeHash(value)}`;
+function uniqueBy(items, keyFn) {
+  const seen = new Set();
+  const result = [];
+
+  for (const item of items) {
+    const key = keyFn(item);
+
+    if (!key || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(item);
+  }
+
+  return result;
 }
 
-function safeUrl(value) {
-    if (!value || typeof value !== 'string') {
-        return null;
+function normalizeUrl(value, baseUrl = null) {
+  if (!value) return null;
+
+  try {
+    const url = baseUrl
+      ? new URL(value, baseUrl)
+      : new URL(value);
+
+    if (!["http:", "https:"].includes(url.protocol)) {
+      return null;
     }
 
-    try {
-        const parsed = new URL(value);
-
-        if (
-            parsed.protocol !== 'https:' &&
-            parsed.protocol !== 'http:'
-        ) {
-            return null;
-        }
-
-        return parsed.toString();
-    } catch {
-        return null;
-    }
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
-function cleanString(value) {
-    if (
-        value === undefined ||
-        value === null
-    ) {
-        return null;
+async function fetchJson(url, options = {}) {
+  const controller = new AbortController();
+
+  const timeout = setTimeout(
+    () => controller.abort(),
+    options.timeout || REQUEST_TIMEOUT_MS
+  );
+
+  try {
+    const response = await fetch(url, {
+      method: options.method || "GET",
+      headers: {
+        Accept: "application/json",
+        "User-Agent": USER_AGENT,
+        ...(options.headers || {})
+      },
+      body:
+        options.body === undefined
+          ? undefined
+          : JSON.stringify(options.body),
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(
+        `HTTP ${response.status} ${response.statusText}`
+      );
     }
 
-    const text = String(value).trim();
-
-    return text || null;
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
-function normalizeType(value) {
-    const type = normalizeText(value);
-
-    if (
-        type === 'movie' ||
-        type === 'movies'
-    ) {
-        return 'movie';
+function readJson(file, fallback) {
+  try {
+    if (!fs.existsSync(file)) {
+      return fallback;
     }
 
-    if (
-        type === 'series' ||
-        type === 'tv series' ||
-        type === 'tv'
-    ) {
-        return 'series';
-    }
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (error) {
+    console.error(
+      `[Storage] Failed reading ${file}:`,
+      error.message
+    );
 
-    if (
-        type === 'anime'
-    ) {
-        return 'anime';
-    }
-
-    return 'other';
+    return fallback;
+  }
 }
 
-function normalizeItem(provider, item) {
-    const title = cleanString(item.title);
+function writeJson(file, value) {
+  const temp = `${file}.tmp`;
 
-    if (!title) {
-        return null;
-    }
+  fs.writeFileSync(
+    temp,
+    JSON.stringify(value, null, 2),
+    "utf8"
+  );
 
-    const sourceId =
-        cleanString(item.sourceId) ||
-        cleanString(item.id) ||
-        cleanString(item.url) ||
-        title;
-
-    const providerId = provider.id;
-
-    return {
-        id: makeStableId(
-            providerId,
-            sourceId
-        ),
-
-        providerId,
-
-        provider: provider.name,
-
-        sourceId,
-
-        title,
-
-        normalizedTitle: normalizeText(title),
-
-        type: normalizeType(item.type),
-
-        year:
-            Number.isInteger(Number(item.year))
-                ? Number(item.year)
-                : null,
-
-        poster:
-            safeUrl(item.poster) ||
-            null,
-
-        backdrop:
-            safeUrl(item.backdrop) ||
-            null,
-
-        description:
-            cleanString(item.description) ||
-            '',
-
-        genres:
-            Array.isArray(item.genres)
-                ? item.genres
-                    .map(cleanString)
-                    .filter(Boolean)
-                : [],
-
-        url:
-            safeUrl(item.url) ||
-            null,
-
-        streams:
-            Array.isArray(item.streams)
-                ? item.streams
-                : [],
-
-        season:
-            item.season == null
-                ? null
-                : Number(item.season),
-
-        episode:
-            item.episode == null
-                ? null
-                : Number(item.episode),
-
-        updatedAt:
-            new Date().toISOString()
-    };
+  fs.renameSync(temp, file);
 }
 
-function deduplicate(items) {
-    const groups = new Map();
+/* ============================================================
+   MEDIA LIBRARY
+============================================================ */
 
-    for (const item of items) {
-        const key = [
-            item.normalizedTitle,
-            item.year || '',
-            item.type
-        ].join('|');
+let mediaLibrary = readJson(CACHE_FILE, []);
 
-        if (!groups.has(key)) {
-            groups.set(key, {
-                ...item,
-                providers: [
-                    {
-                        id: item.providerId,
-                        name: item.provider
-                    }
-                ],
-                providerItems: [item]
-            });
-
-            continue;
-        }
-
-        const existing = groups.get(key);
-
-        if (
-            !existing.poster &&
-            item.poster
-        ) {
-            existing.poster = item.poster;
-        }
-
-        if (
-            !existing.backdrop &&
-            item.backdrop
-        ) {
-            existing.backdrop = item.backdrop;
-        }
-
-        if (
-            (!existing.description ||
-                existing.description.length < item.description.length) &&
-            item.description
-        ) {
-            existing.description =
-                item.description;
-        }
-
-        if (item.url) {
-            existing.providerItems.push(item);
-        }
-
-        if (
-            !existing.providers.some(
-                p => p.id === item.providerId
-            )
-        ) {
-            existing.providers.push({
-                id: item.providerId,
-                name: item.provider
-            });
-        }
-    }
-
-    return Array.from(groups.values());
+if (!Array.isArray(mediaLibrary)) {
+  mediaLibrary = [];
 }
 
-function paginate(items, page, limit) {
-    const safePage =
-        Math.max(1, Number(page) || 1);
+/*
+  Provider contract:
 
-    const safeLimit =
-        Math.min(
-            100,
-            Math.max(1, Number(limit) || 30)
-        );
+  {
+    id,
+    name,
+    type,
+    search(query, options),
+    home(options),
+    load(id, options),
+    sources(id, options)
+  }
 
-    const start =
-        (safePage - 1) * safeLimit;
-
-    return {
-        page: safePage,
-        limit: safeLimit,
-        total: items.length,
-        pages: Math.ceil(
-            items.length / safeLimit
-        ),
-        items: items.slice(
-            start,
-            start + safeLimit
-        )
-    };
-}
-
-/* -------------------------------------------------------------------------- */
-/* Provider system                                                              */
-/* -------------------------------------------------------------------------- */
-
-class Provider {
-    constructor({
-        id,
-        name,
-        version = '1.0.0',
-        types = []
-    }) {
-        this.id = id;
-        this.name = name;
-        this.version = version;
-        this.types = types;
-    }
-
-    metadata() {
-        return {
-            id: this.id,
-            name: this.name,
-            version: this.version,
-            types: this.types,
-            enabled: true
-        };
-    }
-
-    async home() {
-        return [];
-    }
-
-    async search() {
-        return [];
-    }
-
-    async load() {
-        return null;
-    }
-
-    async streams() {
-        return [];
-    }
-}
-
-/* -------------------------------------------------------------------------- */
-/* Internet Archive provider                                                   */
-/* -------------------------------------------------------------------------- */
-
-class InternetArchiveProvider extends Provider {
-    constructor() {
-        super({
-            id: 'internet-archive',
-            name: 'Internet Archive',
-            version: '1.0.0',
-            types: [
-                'movie',
-                'series',
-                'other'
-            ]
-        });
-
-        this.api =
-            'https://archive.org/advancedsearch.php';
-    }
-
-    async request(params) {
-        const response = await axios.get(
-            this.api,
-            {
-                params: {
-                    output: 'json',
-                    rows: MAX_RESULTS_PER_PROVIDER,
-                    page: 1,
-                    ...params
-                },
-                timeout: SEARCH_TIMEOUT_MS,
-                headers: {
-                    'User-Agent':
-                        'Mediav2/2.0'
-                }
-            }
-        );
-
-        return response.data;
-    }
-
-    async search(query, type) {
-        const q =
-            String(query || '').trim();
-
-        if (!q) {
-            return [];
-        }
-
-        let collectionFilter = '';
-
-        if (type === 'movie') {
-            collectionFilter =
-                ' AND mediatype:movies';
-        }
-
-        const data =
-            await this.request({
-                q:
-                    `title:(${q})${collectionFilter}`,
-                fl: [
-                    'identifier',
-                    'title',
-                    'description',
-                    'year',
-                    'date',
-                    'mediatype',
-                    'subject'
-                ].join(','),
-                sort: 'downloads desc'
-            });
-
-        const docs =
-            data?.response?.docs || [];
-
-        return docs.map(doc => ({
-            id:
-                doc.identifier,
-
-            sourceId:
-                doc.identifier,
-
-            title:
-                doc.title ||
-                doc.identifier,
-
-            type:
-                doc.mediatype === 'movies'
-                    ? 'movie'
-                    : 'other',
-
-            year:
-                Number(
-                    doc.year ||
-                    String(doc.date || '')
-                        .slice(0, 4)
-                ) || null,
-
-            description:
-                Array.isArray(doc.description)
-                    ? doc.description[0]
-                    : doc.description || '',
-
-            genres:
-                Array.isArray(doc.subject)
-                    ? doc.subject.slice(0, 10)
-                    : [],
-
-            url:
-                `https://archive.org/details/${encodeURIComponent(
-                    doc.identifier
-                )}`,
-
-            poster:
-                `https://archive.org/services/img/${encodeURIComponent(
-                    doc.identifier
-                )}`
-        }));
-    }
-
-    async load(sourceId) {
-        if (!sourceId) {
-            return null;
-        }
-
-        const identifier =
-            encodeURIComponent(sourceId);
-
-        const metadataUrl =
-            `https://archive.org/metadata/${identifier}`;
-
-        const response =
-            await axios.get(
-                metadataUrl,
-                {
-                    timeout: SEARCH_TIMEOUT_MS,
-                    headers: {
-                        'User-Agent':
-                            'Mediav2/2.0'
-                    }
-                }
-            );
-
-        const data = response.data;
-
-        if (!data) {
-            return null;
-        }
-
-        const metadata =
-            data.metadata || {};
-
-        const files =
-            Array.isArray(data.files)
-                ? data.files
-                : [];
-
-        const streams =
-            files
-                .filter(file => {
-                    const name =
-                        String(
-                            file.name || ''
-                        ).toLowerCase();
-
-                    return (
-                        name.endsWith('.mp4') ||
-                        name.endsWith('.webm') ||
-                        name.endsWith('.m3u8')
-                    );
-                })
-                .map(file => {
-                    const name =
-                        String(file.name);
-
-                    const url =
-                        `https://archive.org/download/${encodeURIComponent(
-                            sourceId
-                        )}/${name
-                            .split('/')
-                            .map(encodeURIComponent)
-                            .join('/')}`;
-
-                    const lower =
-                        name.toLowerCase();
-
-                    let format =
-                        'unknown';
-
-                    if (
-                        lower.endsWith('.mp4')
-                    ) {
-                        format = 'mp4';
-                    } else if (
-                        lower.endsWith('.webm')
-                    ) {
-                        format = 'webm';
-                    } else if (
-                        lower.endsWith('.m3u8')
-                    ) {
-                        format = 'hls';
-                    }
-
-                    return {
-                        id:
-                            makeHash(url),
-
-                        name,
-
-                        url,
-
-                        format,
-
-                        quality:
-                            file.height
-                                ? `${file.height}p`
-                                : null,
-
-                        width:
-                            Number(file.width) ||
-                            null,
-
-                        height:
-                            Number(file.height) ||
-                            null,
-
-                        size:
-                            Number(file.size) ||
-                            null
-                    };
-                });
-
-        return {
-            sourceId,
-
-            title:
-                metadata.title ||
-                sourceId,
-
-            type:
-                normalizeType(
-                    metadata.mediatype
-                ),
-
-            year:
-                Number(
-                    metadata.year ||
-                    String(
-                        metadata.date || ''
-                    ).slice(0, 4)
-                ) || null,
-
-            description:
-                metadata.description || '',
-
-            poster:
-                `https://archive.org/services/img/${identifier}`,
-
-            url:
-                `https://archive.org/details/${identifier}`,
-
-            streams
-        };
-    }
-
-    async streams(sourceId) {
-        const loaded =
-            await this.load(sourceId);
-
-        return loaded?.streams || [];
-    }
-}
-
-/* -------------------------------------------------------------------------- */
-/* Registry                                                                    */
-/* -------------------------------------------------------------------------- */
+  A provider is allowed to fail independently.
+  One broken provider must never break global search.
+*/
 
 const providers = new Map();
 
 function registerProvider(provider) {
-    if (!(provider instanceof Provider)) {
-        throw new Error(
-            'Invalid provider'
-        );
-    }
+  if (!provider || !provider.id) {
+    throw new Error("Provider requires an id");
+  }
 
-    providers.set(
-        provider.id,
-        provider
+  providers.set(provider.id, provider);
+}
+
+/* ============================================================
+   INTERNET ARCHIVE
+   ============================================================
+
+   This is a real provider using Internet Archive's public APIs.
+   It is intentionally used as the built-in provider so the
+   application works without pretending that CloudStream .cs3
+   files can run inside Node.js.
+============================================================ */
+
+const InternetArchiveProvider = {
+  id: "internet-archive",
+  name: "Internet Archive",
+  type: "public-media",
+
+  async search(query, options = {}) {
+    const q = safeString(query);
+
+    if (!q) return [];
+
+    const rows = Math.min(
+      Number(options.limit || 40),
+      100
     );
-}
 
-registerProvider(
-    new InternetArchiveProvider()
-);
-
-/* -------------------------------------------------------------------------- */
-/* Provider operations                                                         */
-/* -------------------------------------------------------------------------- */
-
-async function providerSearch(
-    provider,
-    query,
-    type
-) {
-    const started =
-        Date.now();
-
-    try {
-        const results =
-            await provider.search(
-                query,
-                type
-            );
-
-        const normalized =
-            results
-                .map(item =>
-                    normalizeItem(
-                        provider,
-                        item
-                    )
-                )
-                .filter(Boolean);
-
-        return {
-            provider,
-            results: normalized,
-            elapsed:
-                Date.now() - started,
-            error: null
-        };
-    } catch (error) {
-        return {
-            provider,
-            results: [],
-            elapsed:
-                Date.now() - started,
-            error: error.message
-        };
-    }
-}
-
-/* -------------------------------------------------------------------------- */
-/* Library                                                                     */
-/* -------------------------------------------------------------------------- */
-
-async function globalSearch(
-    query,
-    type
-) {
-    const normalizedQuery =
-        normalizeText(query);
-
-    if (!normalizedQuery) {
-        return [];
-    }
-
-    const activeProviders =
-        Array.from(
-            providers.values()
-        );
-
-    const results =
-        await Promise.all(
-            activeProviders.map(
-                provider =>
-                    providerSearch(
-                        provider,
-                        query,
-                        type
-                    )
-            )
-        );
-
-    const all =
-        results.flatMap(
-            result => result.results
-        );
-
-    const merged =
-        deduplicate(all);
-
-    cache.library =
-        merged;
-
-    cache.updatedAt =
-        new Date().toISOString();
-
-    saveCache();
-
-    return merged;
-}
-
-/* -------------------------------------------------------------------------- */
-/* API                                                                         */
-/* -------------------------------------------------------------------------- */
-
-app.get('/api/health', (req, res) => {
-    res.json({
-        ok: true,
-        service: 'Mediav2',
-        version: '2.0.0',
-        providers:
-            providers.size,
-        library:
-            cache.library.length,
-        updatedAt:
-            cache.updatedAt
+    const params = new URLSearchParams({
+      q: `title:(${q}) AND mediatype:movies`,
+      fl: [
+        "identifier",
+        "title",
+        "description",
+        "creator",
+        "year",
+        "date"
+      ].join(","),
+      rows: String(rows),
+      output: "json",
+      page: "1"
     });
-});
 
-app.get('/api/providers', (req, res) => {
-    res.json({
-        providers:
-            Array.from(
-                providers.values()
-            ).map(
-                provider =>
-                    provider.metadata()
-            )
-    });
-});
+    const url =
+      `https://archive.org/advancedsearch.php?${params}`;
 
-app.get('/api/library', (req, res) => {
-    const {
-        search = '',
-        type = 'all',
-        provider = 'all',
-        page = 1,
-        limit = 30
-    } = req.query;
+    const data = await fetchJson(url);
 
-    let items =
-        Array.isArray(cache.library)
-            ? cache.library
-            : [];
+    const docs =
+      data &&
+      data.response &&
+      Array.isArray(data.response.docs)
+        ? data.response.docs
+        : [];
 
-    if (search) {
-        const q =
-            normalizeText(search);
-
-        items =
-            items.filter(item =>
-                item.normalizedTitle
-                    .includes(q)
-            );
-    }
-
-    if (
-        type &&
-        type !== 'all'
-    ) {
-        items =
-            items.filter(
-                item =>
-                    item.type ===
-                    normalizeType(type)
-            );
-    }
-
-    if (
-        provider &&
-        provider !== 'all'
-    ) {
-        items =
-            items.filter(item =>
-                item.providers?.some(
-                    p =>
-                        p.id === provider
-                )
-            );
-    }
-
-    res.json(
-        paginate(
-            items,
-            page,
-            limit
-        )
+    return docs.map(doc =>
+      normalizeMediaItem({
+        providerId: this.id,
+        providerName: this.name,
+        id: safeString(doc.identifier),
+        title: safeString(doc.title, doc.identifier),
+        type: "movie",
+        description: safeString(doc.description),
+        poster: null,
+        year:
+          Number.isFinite(Number(doc.year))
+            ? Number(doc.year)
+            : null,
+        sourceId: safeString(doc.identifier),
+        sourceUrl:
+          `https://archive.org/details/${encodeURIComponent(
+            safeString(doc.identifier)
+          )}`
+      })
     );
-});
+  },
 
-app.get('/api/search', async (req, res) => {
-    const {
-        q,
-        type = 'all',
-        page = 1,
-        limit = 30
-    } = req.query;
-
-    if (
-        !q ||
-        String(q).trim().length < 2
-    ) {
-        return res.status(400).json({
-            error:
-                'Search query must contain at least 2 characters'
-        });
-    }
-
-    const started =
-        Date.now();
-
-    const items =
-        await globalSearch(
-            String(q),
-            type === 'all'
-                ? null
-                : type
-        );
-
-    res.json({
-        query: String(q),
-        elapsed:
-            Date.now() - started,
-        ...paginate(
-            items,
-            page,
-            limit
-        )
+  async home(options = {}) {
+    const params = new URLSearchParams({
+      q: "mediatype:movies",
+      fl: "identifier,title,description,year,date",
+      rows: String(Math.min(Number(options.limit || 40), 100)),
+      output: "json",
+      page: "1",
+      sort: "downloads desc"
     });
-});
 
-app.get('/api/title/:id', async (req, res) => {
-    const encoded =
-        req.params.id;
+    const data = await fetchJson(
+      `https://archive.org/advancedsearch.php?${params}`
+    );
 
-    let decoded;
+    const docs =
+      data &&
+      data.response &&
+      Array.isArray(data.response.docs)
+        ? data.response.docs
+        : [];
 
-    try {
-        decoded =
-            decodeURIComponent(encoded);
-    } catch {
-        return res.status(400).json({
-            error: 'Invalid title id'
-        });
+    return docs.map(doc =>
+      normalizeMediaItem({
+        providerId: this.id,
+        providerName: this.name,
+        id: safeString(doc.identifier),
+        title: safeString(doc.title, doc.identifier),
+        type: "movie",
+        description: safeString(doc.description),
+        poster: null,
+        year:
+          Number.isFinite(Number(doc.year))
+            ? Number(doc.year)
+            : null,
+        sourceId: safeString(doc.identifier),
+        sourceUrl:
+          `https://archive.org/details/${encodeURIComponent(
+            safeString(doc.identifier)
+          )}`
+      })
+    );
+  },
+
+  async load(item) {
+    const identifier =
+      safeString(item.sourceId) ||
+      safeString(item.id);
+
+    if (!identifier) {
+      throw new Error("Missing Internet Archive identifier");
     }
 
-    const separator =
-        decoded.indexOf(':');
+    const metadata = await fetchJson(
+      `https://archive.org/metadata/${encodeURIComponent(
+        identifier
+      )}`
+    );
 
-    if (separator === -1) {
-        return res.status(400).json({
-            error:
-                'Invalid provider title id'
-        });
-    }
+    const files =
+      metadata && Array.isArray(metadata.files)
+        ? metadata.files
+        : [];
 
-    const providerId =
-        decoded.slice(
-            0,
-            separator
-        );
+    const playable = files
+      .map(file => {
+        const name = safeString(file.name);
 
-    const sourceId =
-        decoded.slice(
-            separator + 1
-        );
+        if (!name) return null;
 
-    const provider =
-        providers.get(providerId);
+        const lower = name.toLowerCase();
 
-    if (!provider) {
-        return res.status(404).json({
-            error:
-                'Provider not found'
-        });
-    }
+        let format = null;
 
-    try {
-        const item =
-            await provider.load(
-                sourceId
-            );
-
-        if (!item) {
-            return res.status(404).json({
-                error:
-                    'Title not found'
-            });
+        if (
+          lower.endsWith(".mp4") ||
+          lower.endsWith(".webm") ||
+          lower.endsWith(".m3u8")
+        ) {
+          format = lower.endsWith(".m3u8")
+            ? "hls"
+            : lower.endsWith(".webm")
+              ? "webm"
+              : "mp4";
         }
 
-        const normalized =
-            normalizeItem(
-                provider,
-                item
-            );
+        if (!format) return null;
 
-        res.json({
-            item: normalized
-        });
-    } catch (error) {
-        console.error(
-            '[Title]',
-            error.message
-        );
+        return {
+          id: hash(`${identifier}:${name}`),
+          title: name,
+          url:
+            `https://archive.org/download/${encodeURIComponent(
+              identifier
+            )}/${name}`,
+          format,
+          quality: extractQuality(name),
+          mime: mimeForFormat(format)
+        };
+      })
+      .filter(Boolean);
 
-        res.status(502).json({
-            error:
-                'Provider failed to load title'
-        });
+    return {
+      ...normalizeMediaItem({
+        providerId: this.id,
+        providerName: this.name,
+        id: identifier,
+        title:
+          safeString(metadata.metadata?.title) ||
+          identifier,
+        type: "movie",
+        description:
+          safeString(metadata.metadata?.description),
+        poster: null,
+        sourceId: identifier,
+        sourceUrl:
+          `https://archive.org/details/${encodeURIComponent(
+            identifier
+          )}`
+      }),
+      sources: uniqueBy(
+        playable,
+        source => source.url
+      )
+    };
+  }
+};
+
+registerProvider(InternetArchiveProvider);
+
+/* ============================================================
+   CLOUDSTREAM EXTENSION REGISTRY
+============================================================ */
+
+let extensionState = readJson(
+  EXTENSIONS_FILE,
+  {
+    version: 1,
+    updatedAt: null,
+    repositories: [],
+    extensions: []
+  }
+);
+
+if (!extensionState || typeof extensionState !== "object") {
+  extensionState = {
+    version: 1,
+    updatedAt: null,
+    repositories: [],
+    extensions: []
+  };
+}
+
+/*
+  IMPORTANT:
+
+  This registry understands CloudStream's repository format.
+
+  It DOES NOT execute .cs3 files.
+
+  A .cs3 is a compiled CloudStream extension. Its metadata can be
+  indexed by Mediav2, but search/load/loadLinks require a
+  CloudStream-compatible runtime.
+
+  If CLOUDSTREAM_BRIDGE_URL is configured, the server can delegate
+  those operations to that runtime.
+*/
+
+function getConfiguredRepositories() {
+  const configured = safeString(
+    process.env.CLOUDSTREAM_REPOSITORIES
+  );
+
+  if (!configured) {
+    return [];
+  }
+
+  return configured
+    .split(",")
+    .map(value => value.trim())
+    .filter(Boolean)
+    .map((url, index) => ({
+      id: `repository-${index + 1}-${hash(url)}`,
+      name: `CloudStream Repository ${index + 1}`,
+      url
+    }));
+}
+
+function normalizeExtension(plugin, repository) {
+  if (!plugin || typeof plugin !== "object") {
+    return null;
+  }
+
+  const name = safeString(
+    plugin.name,
+    safeString(plugin.internalName, "Unknown Extension")
+  );
+
+  const internalName = safeString(
+    plugin.internalName,
+    name
+  );
+
+  const url = normalizeUrl(
+    plugin.url,
+    repository.url
+  );
+
+  if (!url) {
+    return null;
+  }
+
+  const tvTypes = Array.isArray(plugin.tvTypes)
+    ? plugin.tvTypes
+    : [];
+
+  const language = Array.isArray(plugin.language)
+    ? plugin.language
+    : safeString(plugin.language)
+      ? [plugin.language]
+      : [];
+
+  const authors = Array.isArray(plugin.authors)
+    ? plugin.authors
+    : safeString(plugin.authors)
+      ? [plugin.authors]
+      : [];
+
+  return {
+    id: hash(
+      `${repository.id}:${internalName}:${url}`
+    ),
+    internalName,
+    name,
+    url,
+    status: safeString(plugin.status, "unknown"),
+    version: safeString(plugin.version, "unknown"),
+    apiVersion: safeString(
+      plugin.apiVersion,
+      "unknown"
+    ),
+    description: safeString(plugin.description),
+    repositoryUrl: normalizeUrl(
+      plugin.repositoryUrl,
+      repository.url
+    ),
+    iconUrl: normalizeUrl(
+      plugin.iconUrl,
+      repository.url
+    ),
+    tvTypes,
+    language,
+    authors,
+    fileSize: plugin.fileSize || null,
+    fileHash: safeString(plugin.fileHash),
+    repositoryId: repository.id,
+    repositoryName: repository.name,
+    updatedAt: now()
+  };
+}
+
+function extractPluginArray(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+
+  for (const key of [
+    "plugins",
+    "pluginList",
+    "items",
+    "extensions"
+  ]) {
+    if (Array.isArray(value[key])) {
+      return value[key];
     }
-});
+  }
 
-app.get('/api/sources/:id', async (req, res) => {
-    const encoded =
-        req.params.id;
+  return [];
+}
 
-    let decoded;
+async function syncOneExtensionRepository(repository) {
+  const repoManifest = await fetchJson(repository.url);
 
-    try {
-        decoded =
-            decodeURIComponent(encoded);
-    } catch {
-        return res.status(400).json({
-            error:
-                'Invalid source id'
-        });
-    }
+  const pluginLists = Array.isArray(
+    repoManifest.pluginLists
+  )
+    ? repoManifest.pluginLists
+    : [];
 
-    const separator =
-        decoded.indexOf(':');
+  const repositories = [];
+  const extensions = [];
 
-    if (separator === -1) {
-        return res.status(400).json({
-            error:
-                'Invalid source id'
-        });
-    }
+  repositories.push({
+    ...repository,
+    status: "online",
+    manifestVersion:
+      repoManifest.manifestVersion || null,
+    description:
+      safeString(repoManifest.description),
+    pluginLists
+  });
 
-    const providerId =
-        decoded.slice(
-            0,
-            separator
-        );
+  /*
+    Some manifests expose plugins directly. Support that too.
+  */
 
-    const sourceId =
-        decoded.slice(
-            separator + 1
-        );
+  const directPlugins =
+    extractPluginArray(repoManifest);
 
-    const provider =
-        providers.get(providerId);
-
-    if (!provider) {
-        return res.status(404).json({
-            error:
-                'Provider not found'
-        });
-    }
-
-    try {
-        const streams =
-            await provider.streams(
-                sourceId
-            );
-
-        res.json({
-            provider:
-                provider.metadata(),
-
-            sources:
-                streams
-                    .filter(
-                        stream =>
-                            safeUrl(
-                                stream.url
-                            )
-                    )
-            });
-    } catch (error) {
-        console.error(
-            '[Sources]',
-            error.message
-        );
-
-        res.status(502).json({
-            error:
-                'Provider failed to resolve streams'
-        });
-    }
-});
-
-app.post('/api/sync', async (req, res) => {
-    const {
-        query = ''
-    } = req.body || {};
-
-    if (
-        String(query).trim().length < 2
-    ) {
-        return res.status(400).json({
-            error:
-                'Sync requires a search query of at least 2 characters'
-        });
-    }
-
-    try {
-        const items =
-            await globalSearch(
-                String(query),
-                null
-            );
-
-        res.json({
-            ok: true,
-            count: items.length,
-            updatedAt:
-                cache.updatedAt
-        });
-    } catch (error) {
-        res.status(500).json({
-            error:
-                error.message
-        });
-    }
-});
-
-/* -------------------------------------------------------------------------- */
-/* 404                                                                         */
-/* -------------------------------------------------------------------------- */
-
-app.use('/api', (req, res) => {
-    res.status(404).json({
-        error: 'API endpoint not found'
-    });
-});
-
-/* -------------------------------------------------------------------------- */
-/* Frontend fallback                                                           */
-/* -------------------------------------------------------------------------- */
-
-app.get('*', (req, res) => {
-    res.sendFile(
-        path.join(
-            __dirname,
-            'public',
-            'index.html'
-        )
+  for (const plugin of directPlugins) {
+    const normalized = normalizeExtension(
+      plugin,
+      repository
     );
+
+    if (normalized) {
+      extensions.push(normalized);
+    }
+  }
+
+  for (const pluginListUrl of pluginLists) {
+    try {
+      const absoluteUrl = normalizeUrl(
+        pluginListUrl,
+        repository.url
+      );
+
+      if (!absoluteUrl) {
+        continue;
+      }
+
+      const pluginList = await fetchJson(
+        absoluteUrl
+      );
+
+      for (const plugin of extractPluginArray(
+        pluginList
+      )) {
+        const normalized = normalizeExtension(
+          plugin,
+          {
+            ...repository,
+            url: absoluteUrl
+          }
+        );
+
+        if (normalized) {
+          extensions.push(normalized);
+        }
+      }
+    } catch (error) {
+      console.error(
+        `[Extensions] Failed plugin list ${pluginListUrl}:`,
+        error.message
+      );
+    }
+  }
+
+  return {
+    repository:
+      repositories[0],
+    extensions
+  };
+}
+
+async function syncExtensions() {
+  const repositories =
+    getConfiguredRepositories();
+
+  if (repositories.length === 0) {
+    console.log(
+      "[Extensions] No CLOUDSTREAM_REPOSITORIES configured."
+    );
+
+    extensionState = {
+      version: 1,
+      updatedAt: now(),
+      repositories: [],
+      extensions: []
+    };
+
+    writeJson(
+      EXTENSIONS_FILE,
+      extensionState
+    );
+
+    return extensionState;
+  }
+
+  const allRepositories = [];
+  const allExtensions = [];
+
+  for (const repository of repositories) {
+    try {
+      const result =
+        await syncOneExtensionRepository(
+          repository
+        );
+
+      allRepositories.push(
+        result.repository
+      );
+
+      allExtensions.push(
+        ...result.extensions
+      );
+
+      console.log(
+        `[Extensions] ${repository.name}: ` +
+        `${result.extensions.length} extensions`
+      );
+    } catch (error) {
+      console.error(
+        `[Extensions] ${repository.name} failed:`,
+        error.message
+      );
+
+      allRepositories.push({
+        ...repository,
+        status: "offline",
+        error: error.message,
+        checkedAt: now()
+      });
+    }
+  }
+
+  extensionState = {
+    version: 1,
+    updatedAt: now(),
+    repositories: allRepositories,
+    extensions: uniqueBy(
+      allExtensions,
+      extension => extension.id
+    )
+  };
+
+  writeJson(
+    EXTENSIONS_FILE,
+    extensionState
+  );
+
+  return extensionState;
+}
+
+/* ============================================================
+   CLOUDSTREAM BRIDGE
+============================================================ */
+
+async function bridgeRequest(
+  endpoint,
+  body = null
+) {
+  if (!BRIDGE_URL) {
+    throw new Error(
+      "CLOUDSTREAM_BRIDGE_URL is not configured"
+    );
+  }
+
+  const url =
+    `${BRIDGE_URL}/${endpoint.replace(/^\/+/, "")}`;
+
+  return fetchJson(url, {
+    method: body === null ? "GET" : "POST",
+    body
+  });
+}
+
+async function bridgeSearch(query, options = {}) {
+  if (!BRIDGE_URL) {
+    return [];
+  }
+
+  try {
+    const result = await bridgeRequest(
+      "/search",
+      {
+        query,
+        type: options.type || "all",
+        extensions:
+          options.extensions || null
+      }
+    );
+
+    return Array.isArray(result)
+      ? result
+      : Array.isArray(result.results)
+        ? result.results
+        : [];
+  } catch (error) {
+    console.error(
+      "[CloudStream Bridge] Search failed:",
+      error.message
+    );
+
+    return [];
+  }
+}
+
+async function bridgeHome(options = {}) {
+  if (!BRIDGE_URL) {
+    return [];
+  }
+
+  try {
+    const result = await bridgeRequest(
+      "/home",
+      {
+        type: options.type || "all",
+        extensions:
+          options.extensions || null,
+        limit:
+          Number(options.limit || 100)
+      }
+    );
+
+    return Array.isArray(result)
+      ? result
+      : Array.isArray(result.items)
+        ? result.items
+        : [];
+  } catch (error) {
+    console.error(
+      "[CloudStream Bridge] Home failed:",
+      error.message
+    );
+
+    return [];
+  }
+}
+
+async function bridgeSources(payload) {
+  if (!BRIDGE_URL) {
+    throw new Error(
+      "CloudStream bridge is not configured"
+    );
+  }
+
+  return bridgeRequest(
+    "/sources",
+    payload
+  );
+}
+
+/* ============================================================
+   NORMALIZATION
+============================================================ */
+
+function normalizeMediaItem(item) {
+  const providerId =
+    safeString(item.providerId, "unknown");
+
+  const sourceId =
+    safeString(
+      item.sourceId,
+      safeString(item.id)
+    );
+
+  const title =
+    safeString(
+      item.title,
+      "Untitled"
+    );
+
+  return {
+    id:
+      safeString(item.id) ||
+      hash(
+        `${providerId}:${sourceId}:${title}`
+      ),
+
+    title,
+    type:
+      safeString(item.type, "unknown"),
+
+    providerId,
+    providerName:
+      safeString(
+        item.providerName,
+        providerId
+      ),
+
+    description:
+      safeString(item.description),
+
+    poster:
+      normalizeUrl(item.poster),
+
+    backdrop:
+      normalizeUrl(item.backdrop),
+
+    year:
+      item.year == null
+        ? null
+        : Number(item.year) || null,
+
+    sourceId,
+
+    sourceUrl:
+      normalizeUrl(item.sourceUrl),
+
+    metadata:
+      item.metadata &&
+      typeof item.metadata === "object"
+        ? item.metadata
+        : {},
+
+    updatedAt: now()
+  };
+}
+
+function normalizeBridgeResult(item) {
+  if (!item || typeof item !== "object") {
+    return null;
+  }
+
+  return normalizeMediaItem({
+    ...item,
+    providerId:
+      safeString(
+        item.providerId,
+        safeString(item.provider)
+      ),
+    providerName:
+      safeString(
+        item.providerName,
+        safeString(item.provider)
+      )
+  });
+}
+
+function extractQuality(name) {
+  const match = String(name).match(
+    /(2160p|1440p|1080p|720p|480p|360p|4k)/i
+  );
+
+  return match
+    ? match[1].toUpperCase()
+    : "Unknown";
+}
+
+function mimeForFormat(format) {
+  switch (format) {
+    case "hls":
+      return "application/x-mpegURL";
+
+    case "webm":
+      return "video/webm";
+
+    case "mp4":
+    default:
+      return "video/mp4";
+  }
+}
+
+/* ============================================================
+   LIBRARY SYNC
+============================================================ */
+
+let syncRunning = false;
+
+async function syncLibrary() {
+  if (syncRunning) {
+    return;
+  }
+
+  syncRunning = true;
+
+  try {
+    const collected = [];
+
+    /*
+      Provider home/catalogue
+    */
+
+    for (const provider of providers.values()) {
+      if (typeof provider.home !== "function") {
+        continue;
+      }
+
+      try {
+        const items =
+          await provider.home({
+            limit: 50
+          });
+
+        for (const item of items) {
+          const normalized =
+            normalizeMediaItem(item);
+
+          if (normalized) {
+            collected.push(normalized);
+          }
+        }
+      } catch (error) {
+        console.error(
+          `[Library] ${provider.name} failed:`,
+          error.message
+        );
+      }
+    }
+
+    /*
+      CloudStream bridge catalogue.
+    */
+
+    const bridgeItems =
+      await bridgeHome({
+        limit: 100
+      });
+
+    for (const item of bridgeItems) {
+      const normalized =
+        normalizeBridgeResult(item);
+
+      if (normalized) {
+        collected.push(normalized);
+      }
+    }
+
+    mediaLibrary = uniqueBy(
+      collected,
+      item =>
+        `${item.providerId}:${item.sourceId}:${item.title}`
+    );
+
+    writeJson(
+      CACHE_FILE,
+      mediaLibrary
+    );
+
+    console.log(
+      `[Library] Synchronised ${mediaLibrary.length} titles.`
+    );
+  } finally {
+    syncRunning = false;
+  }
+}
+
+/* ============================================================
+   GLOBAL SEARCH
+============================================================ */
+
+async function searchAllProviders(
+  query,
+  options = {}
+) {
+  const results = [];
+
+  const providerTasks =
+    [...providers.values()]
+      .filter(
+        provider =>
+          typeof provider.search === "function"
+      )
+      .map(async provider => {
+        try {
+          const items =
+            await provider.search(
+              query,
+              options
+            );
+
+          for (const item of items) {
+            const normalized =
+              normalizeMediaItem(item);
+
+            if (normalized) {
+              results.push(normalized);
+            }
+          }
+        } catch (error) {
+          console.error(
+            `[Search] ${provider.name} failed:`,
+            error.message
+          );
+        }
+      });
+
+  await Promise.allSettled(
+    providerTasks
+  );
+
+  const bridgeResults =
+    await bridgeSearch(
+      query,
+      options
+    );
+
+  for (const item of bridgeResults) {
+    const normalized =
+      normalizeBridgeResult(item);
+
+    if (normalized) {
+      results.push(normalized);
+    }
+  }
+
+  const deduped = uniqueBy(
+    results,
+    item =>
+      `${item.providerId}:${item.sourceId}:${item.title}`
+  );
+
+  /*
+    Search results become part of the local library.
+
+    This is what makes the library grow when users search.
+  */
+
+  const merged = uniqueBy(
+    [
+      ...mediaLibrary,
+      ...deduped
+    ],
+    item =>
+      `${item.providerId}:${item.sourceId}:${item.title}`
+  );
+
+  mediaLibrary = merged;
+
+  writeJson(
+    CACHE_FILE,
+    mediaLibrary
+  );
+
+  return deduped;
+}
+
+/* ============================================================
+   API
+============================================================ */
+
+app.get("/api/health", (req, res) => {
+  res.json({
+    ok: true,
+    service: "Mediav2",
+    time: now(),
+    providers: providers.size,
+    extensions:
+      extensionState.extensions.length,
+    library:
+      mediaLibrary.length,
+    cloudstreamBridge:
+      Boolean(BRIDGE_URL),
+    extensionSync:
+      extensionState.updatedAt
+  });
 });
 
-/* -------------------------------------------------------------------------- */
-/* Background maintenance                                                      */
-/* -------------------------------------------------------------------------- */
+app.get("/api/providers", (req, res) => {
+  res.json({
+    providers:
+      [...providers.values()].map(
+        provider => ({
+          id: provider.id,
+          name: provider.name,
+          type: provider.type,
+          runtime: "native"
+        })
+      ),
+
+    cloudstreamBridge: {
+      enabled: Boolean(BRIDGE_URL),
+      runtime:
+        BRIDGE_URL
+          ? "external-cloudstream-runtime"
+          : null
+    }
+  });
+});
+
+app.get("/api/extensions", (req, res) => {
+  res.json({
+    updatedAt:
+      extensionState.updatedAt,
+
+    repositories:
+      extensionState.repositories,
+
+    count:
+      extensionState.extensions.length,
+
+    extensions:
+      extensionState.extensions
+  });
+});
+
+app.post("/api/extensions/sync", async (req, res) => {
+  try {
+    const state =
+      await syncExtensions();
+
+    res.json({
+      ok: true,
+      updatedAt:
+        state.updatedAt,
+      count:
+        state.extensions.length
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+app.get("/api/library", (req, res) => {
+  const category =
+    safeString(req.query.category, "all")
+      .toLowerCase();
+
+  const search =
+    safeString(req.query.search)
+      .toLowerCase();
+
+  let filtered =
+    [...mediaLibrary];
+
+  if (
+    category &&
+    category !== "all"
+  ) {
+    filtered =
+      filtered.filter(
+        item =>
+          safeString(item.type)
+            .toLowerCase() === category
+      );
+  }
+
+  if (search) {
+    filtered =
+      filtered.filter(item =>
+        [
+          item.title,
+          item.description,
+          item.providerName,
+          item.year
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(search)
+      );
+  }
+
+  res.json({
+    count: filtered.length,
+    library: filtered
+  });
+});
+
+app.get("/api/search", async (req, res) => {
+  const query =
+    safeString(req.query.q);
+
+  if (!query) {
+    return res.status(400).json({
+      error: "Query is required"
+    });
+  }
+
+  try {
+    const results =
+      await searchAllProviders(
+        query,
+        {
+          type:
+            safeString(
+              req.query.type,
+              "all"
+            )
+        }
+      );
+
+    res.json({
+      query,
+      count: results.length,
+      results
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error.message
+    });
+  }
+});
+
+app.post("/api/sync", async (req, res) => {
+  try {
+    await syncExtensions();
+    await syncLibrary();
+
+    res.json({
+      ok: true,
+      library:
+        mediaLibrary.length,
+      extensions:
+        extensionState.extensions.length
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      error: error.message
+    });
+  }
+});
+
+app.get("/api/title/:id", async (req, res) => {
+  const id =
+    safeString(req.params.id);
+
+  const item =
+    mediaLibrary.find(
+      candidate =>
+        candidate.id === id
+    );
+
+  if (!item) {
+    return res.status(404).json({
+      error: "Title not found"
+    });
+  }
+
+  const provider =
+    providers.get(
+      item.providerId
+    );
+
+  if (
+    provider &&
+    typeof provider.load === "function"
+  ) {
+    try {
+      const loaded =
+        await provider.load(item);
+
+      return res.json({
+        item:
+          normalizeMediaItem(
+            loaded
+          ),
+        sources:
+          Array.isArray(
+            loaded.sources
+          )
+            ? loaded.sources
+            : []
+      });
+    } catch (error) {
+      console.error(
+        `[Title] ${item.providerName}:`,
+        error.message
+      );
+    }
+  }
+
+  if (BRIDGE_URL) {
+    try {
+      const result =
+        await bridgeRequest(
+          "/load",
+          {
+            providerId:
+              item.providerId,
+            sourceId:
+              item.sourceId,
+            id:
+              item.id
+          }
+        );
+
+      return res.json(result);
+    } catch (error) {
+      console.error(
+        "[CloudStream Bridge] Load failed:",
+        error.message
+      );
+    }
+  }
+
+  res.json({
+    item,
+    sources: []
+  });
+});
+
+app.get("/api/sources/:id", async (req, res) => {
+  const id =
+    safeString(req.params.id);
+
+  const item =
+    mediaLibrary.find(
+      candidate =>
+        candidate.id === id
+    );
+
+  if (!item) {
+    return res.status(404).json({
+      error: "Title not found"
+    });
+  }
+
+  const provider =
+    providers.get(
+      item.providerId
+    );
+
+  if (
+    provider &&
+    typeof provider.load === "function"
+  ) {
+    try {
+      const loaded =
+        await provider.load(item);
+
+      return res.json({
+        title:
+          item.title,
+        provider:
+          item.providerName,
+        sources:
+          Array.isArray(
+            loaded.sources
+          )
+            ? loaded.sources
+            : []
+      });
+    } catch (error) {
+      console.error(
+        `[Sources] ${item.providerName}:`,
+        error.message
+      );
+    }
+  }
+
+  if (BRIDGE_URL) {
+    try {
+      const result =
+        await bridgeSources({
+          providerId:
+            item.providerId,
+          sourceId:
+            item.sourceId,
+          id:
+            item.id
+        });
+
+      return res.json(
+        result
+      );
+    } catch (error) {
+      return res.status(502).json({
+        error:
+          "CloudStream bridge failed",
+        details:
+          error.message
+      });
+    }
+  }
+
+  return res.json({
+    title:
+      item.title,
+    provider:
+      item.providerName,
+    sources: []
+  });
+});
+
+/* ============================================================
+   AUTOMATIC BACKGROUND TASKS
+============================================================ */
+
+async function startup() {
+  console.log(
+    `[Mediav2] Starting on port ${PORT}`
+  );
+
+  try {
+    await syncExtensions();
+  } catch (error) {
+    console.error(
+      "[Startup] Extension sync failed:",
+      error.message
+    );
+  }
+
+  try {
+    await syncLibrary();
+  } catch (error) {
+    console.error(
+      "[Startup] Library sync failed:",
+      error.message
+    );
+  }
+}
 
 setInterval(
-    () => {
-        if (
-            cache.updatedAt &&
-            Date.now() -
-                new Date(
-                    cache.updatedAt
-                ).getTime() >
-                CACHE_TTL_MS
-        ) {
-            console.log(
-                '[Cache] Library cache is stale; retaining it until a new search is requested.'
-            );
-        }
-    },
-    5 * 60 * 1000
+  async () => {
+    try {
+      await syncExtensions();
+      await syncLibrary();
+    } catch (error) {
+      console.error(
+        "[Background Sync]",
+        error.message
+      );
+    }
+  },
+  EXTENSION_SYNC_HOURS *
+    60 *
+    60 *
+    1000
 );
 
-/* -------------------------------------------------------------------------- */
-/* Start                                                                       */
-/* -------------------------------------------------------------------------- */
+app.get("*", (req, res) => {
+  if (
+    req.path.startsWith("/api/")
+  ) {
+    return res.status(404).json({
+      error: "API endpoint not found"
+    });
+  }
+
+  res.sendFile(
+    path.join(
+      __dirname,
+      "public",
+      "index.html"
+    )
+  );
+});
 
 app.listen(
-    PORT,
-    HOST,
-    () => {
-        console.log(
-            `Mediav2 running on ${HOST}:${PORT}`
-        );
-
-        console.log(
-            `Registered providers: ${providers.size}`
-        );
-
-        for (
-            const provider
-            of providers.values()
-        ) {
-            console.log(
-                ` - ${provider.id} (${provider.version})`
-            );
-        }
-    }
+  PORT,
+  () => {
+    startup().catch(error =>
+      console.error(
+        "[Startup]",
+        error
+      )
+    );
+  }
 );
