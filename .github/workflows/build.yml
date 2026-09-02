@@ -6,7 +6,6 @@ on:
   push:
     branches:
       - main
-
     paths:
       - "runtime/**"
       - ".github/workflows/build.yml"
@@ -24,15 +23,23 @@ concurrency:
 
 jobs:
   build-runtime:
+    name: Build Mediav2 Runtime
     runs-on: ubuntu-latest
 
     steps:
+      # ------------------------------------------------------------
+      # Checkout Mediav2
+      # ------------------------------------------------------------
       - name: Checkout Mediav2
         uses: actions/checkout@v4
         with:
           path: mediav2
+          fetch-depth: 1
 
-      - name: Checkout CloudStream JVM runtime
+      # ------------------------------------------------------------
+      # Checkout CloudStream runtime host
+      # ------------------------------------------------------------
+      - name: Checkout CloudStream runtime
         uses: actions/checkout@v4
         with:
           repository: DHR-Store/CS-3
@@ -40,6 +47,9 @@ jobs:
           path: runtime-host
           fetch-depth: 1
 
+      # ------------------------------------------------------------
+      # Java
+      # ------------------------------------------------------------
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -47,93 +57,231 @@ jobs:
           java-version: "21"
           cache: gradle
 
-      - name: Install Mediav2 runtime module
+      # ------------------------------------------------------------
+      # Validate repositories
+      # ------------------------------------------------------------
+      - name: Validate source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Checking Mediav2..."
+
+          test -f "mediav2/runtime/BridgeServer.kt"
+          test -f "mediav2/runtime/build.gradle.kts"
+
+          echo "Checking CloudStream runtime..."
+
+          test -f "runtime-host/settings.gradle.kts"
+          test -f "runtime-host/build.gradle.kts"
+          test -f "runtime-host/gradlew"
+
+          echo "Source tree OK."
+
+      # ------------------------------------------------------------
+      # Prepare Gradle module
+      # ------------------------------------------------------------
+      - name: Add Mediav2 runtime module
         working-directory: runtime-host
         shell: bash
         run: |
           set -euo pipefail
 
-          rm -rf mediav2-runtime
+          MODULE="mediav2-runtime"
+
+          rm -rf "$MODULE"
 
           mkdir -p \
-            mediav2-runtime/src/main/kotlin/com/star884/mediav2/runtime
+            "$MODULE/src/main/kotlin/com/star884/mediav2/runtime"
 
           cp \
-            ../mediav2/runtime/BridgeServer.kt \
-            mediav2-runtime/src/main/kotlin/com/star884/mediav2/runtime/BridgeServer.kt
+            "../mediav2/runtime/BridgeServer.kt" \
+            "$MODULE/src/main/kotlin/com/star884/mediav2/runtime/BridgeServer.kt"
 
           cp \
-            ../mediav2/runtime/build.gradle.kts \
-            mediav2-runtime/build.gradle.kts
+            "../mediav2/runtime/build.gradle.kts" \
+            "$MODULE/build.gradle.kts"
 
-          if ! grep -q 'include(":mediav2-runtime")' settings.gradle.kts; then
+          if ! grep -Fq 'include(":mediav2-runtime")' settings.gradle.kts; then
             printf '\ninclude(":mediav2-runtime")\n' >> settings.gradle.kts
           fi
 
-      - name: Build runtime
+          echo
+          echo "Mediav2 module:"
+          find "$MODULE" -maxdepth 5 -type f -print
+
+          echo
+          echo "Gradle settings:"
+          tail -n 20 settings.gradle.kts
+
+      # ------------------------------------------------------------
+      # Gradle permissions
+      # ------------------------------------------------------------
+      - name: Make Gradle executable
+        working-directory: runtime-host
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+
+      # ------------------------------------------------------------
+      # Verify Gradle
+      # ------------------------------------------------------------
+      - name: Verify Gradle module
         working-directory: runtime-host
         shell: bash
         run: |
           set -euo pipefail
 
-          chmod +x ./gradlew
-
           ./gradlew \
-            :mediav2-runtime:jar \
+            :mediav2-runtime:tasks \
             --no-daemon \
             --stacktrace
 
-      - name: Validate runtime
+      # ------------------------------------------------------------
+      # Build
+      # ------------------------------------------------------------
+      - name: Build Mediav2 runtime
+        working-directory: runtime-host
         shell: bash
         run: |
           set -euo pipefail
 
-          JAR="$(find runtime-host/mediav2-runtime/build/libs \
-            -maxdepth 1 \
-            -type f \
-            -name '*.jar' \
-            ! -name '*-plain.jar' \
-            | head -n 1)"
+          ./gradlew \
+            :mediav2-runtime:build \
+            --no-daemon \
+            --stacktrace
 
-          test -n "$JAR"
-          test -s "$JAR"
+      # ------------------------------------------------------------
+      # Locate artifact
+      # ------------------------------------------------------------
+      - name: Locate runtime JAR
+        id: artifact
+        working-directory: runtime-host
+        shell: bash
+        run: |
+          set -euo pipefail
 
-          echo "Runtime:"
+          BUILD_DIR="mediav2-runtime/build/libs"
+
+          if [ ! -d "$BUILD_DIR" ]; then
+            echo "ERROR: Gradle did not create $BUILD_DIR"
+            exit 1
+          fi
+
+          echo "Produced files:"
+          find "$BUILD_DIR" -maxdepth 1 -type f -print
+
+          JAR="$(
+            find "$BUILD_DIR" \
+              -maxdepth 1 \
+              -type f \
+              -name "*.jar" \
+              ! -name "*-plain.jar" \
+              -print |
+              head -n 1
+          )"
+
+          if [ -z "$JAR" ]; then
+            echo "ERROR: No usable runtime JAR was produced."
+            exit 1
+          fi
+
+          if [ ! -s "$JAR" ]; then
+            echo "ERROR: Runtime JAR is empty."
+            exit 1
+          fi
+
+          echo "jar=$JAR" >> "$GITHUB_OUTPUT"
+
+          echo
+          echo "Selected artifact:"
           ls -lh "$JAR"
 
-      - name: Prepare build output
+      # ------------------------------------------------------------
+      # Prepare deployment artifacts
+      # ------------------------------------------------------------
+      - name: Prepare runtime output
         shell: bash
         run: |
           set -euo pipefail
 
-          rm -rf mediav2/build
-          mkdir -p mediav2/build/runtime
+          OUTPUT="mediav2/build/runtime"
 
-          JAR="$(find runtime-host/mediav2-runtime/build/libs \
-            -maxdepth 1 \
-            -type f \
-            -name '*.jar' \
-            ! -name '*-plain.jar' \
-            | head -n 1)"
+          rm -rf "mediav2/build"
+          mkdir -p "$OUTPUT"
+
+          JAR="${{ steps.artifact.outputs.jar }}"
+
+          if [ ! -f "runtime-host/$JAR" ]; then
+            echo "ERROR: Expected artifact does not exist:"
+            echo "runtime-host/$JAR"
+            exit 1
+          fi
 
           cp \
-            "$JAR" \
-            mediav2/build/runtime/mediav2-runtime.jar
+            "runtime-host/$JAR" \
+            "$OUTPUT/mediav2-runtime.jar"
 
           sha256sum \
-            mediav2/build/runtime/mediav2-runtime.jar \
-            > mediav2/build/runtime/mediav2-runtime.jar.sha256
+            "$OUTPUT/mediav2-runtime.jar" \
+            > "$OUTPUT/mediav2-runtime.jar.sha256"
 
-          cat > mediav2/build/runtime/version.json <<EOF
-          {
-            "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "sourceRepository": "DHR-Store/CS-3",
-            "sourceRef": "main",
-            "artifact": "mediav2-runtime.jar"
-          }
-          EOF
+          SOURCE_COMMIT="$(
+            git -C runtime-host rev-parse HEAD
+          )"
 
-      - name: Publish runtime
+          SOURCE_COMMIT_SHORT="$(
+            git -C runtime-host rev-parse --short HEAD
+          )"
+
+          MEDIAV2_COMMIT="$(
+            git -C mediav2 rev-parse HEAD
+          )"
+
+          cat > "$OUTPUT/version.json" <<EOF
+{
+  "name": "Mediav2 CloudStream Runtime",
+  "artifact": "mediav2-runtime.jar",
+  "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "sourceRepository": "DHR-Store/CS-3",
+  "sourceRef": "main",
+  "sourceCommit": "$SOURCE_COMMIT",
+  "sourceCommitShort": "$SOURCE_COMMIT_SHORT",
+  "mediav2Commit": "$MEDIAV2_COMMIT"
+}
+EOF
+
+          echo
+          echo "Final build output:"
+          find "mediav2/build" -type f -print
+
+          echo
+          echo "SHA256:"
+          cat "$OUTPUT/mediav2-runtime.jar.sha256"
+
+          echo
+          echo "Version:"
+          cat "$OUTPUT/version.json"
+
+      # ------------------------------------------------------------
+      # Upload artifact to Actions
+      # ------------------------------------------------------------
+      - name: Upload runtime artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mediav2-runtime
+          path: |
+            mediav2/build/runtime/mediav2-runtime.jar
+            mediav2/build/runtime/mediav2-runtime.jar.sha256
+            mediav2/build/runtime/version.json
+          if-no-files-found: error
+          retention-days: 7
+
+      # ------------------------------------------------------------
+      # Publish to builds branch
+      # ------------------------------------------------------------
+      - name: Publish runtime to builds branch
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -141,17 +289,34 @@ jobs:
           publish_dir: ./mediav2/build
           keep_files: true
           force_orphan: false
-          commit_message: "Build Mediav2 CloudStream JVM runtime"
+          commit_message: "Build Mediav2 CloudStream runtime"
 
+      # ------------------------------------------------------------
+      # Optional Render deployment
+      # ------------------------------------------------------------
       - name: Trigger Render deployment
-        if: ${{ secrets.RENDER_DEPLOY_HOOK_URL != '' }}
         env:
           RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
         shell: bash
         run: |
+          set -euo pipefail
+
+          if [ -z "${RENDER_DEPLOY_HOOK_URL:-}" ]; then
+            echo "RENDER_DEPLOY_HOOK_URL is not configured."
+            echo "Skipping Render deployment."
+            exit 0
+          fi
+
+          echo "Triggering Render deployment..."
+
           curl \
             --fail \
             --silent \
             --show-error \
+            --retry 3 \
+            --retry-delay 2 \
             -X POST \
             "$RENDER_DEPLOY_HOOK_URL"
+
+          echo
+          echo "Render deployment triggered successfully."
