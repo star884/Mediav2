@@ -1,0 +1,28 @@
+[
+  {
+    "iconUrl": "https://i3.wp.com/yt3.googleusercontent.com/ytc/AIdro_nCBArSmvOc6o-k2hTYpLtQMPrKqGtAw_nC20rxm70akA=s900-c-k-c0x00ffffff-no-rj?ssl=1",
+    "apiVersion": 1,
+    "repositoryUrl": "https://github.com/tpadev/phiser-streamplay",
+    "fileSize": 774670,
+    "status": 1,
+    "language": "en",
+    "authors": [
+      "Phisher98",
+      "Hexated"
+    ],
+    "tvTypes": [
+      "AsianDrama",
+      "TvSeries",
+      "Anime",
+      "Movie",
+      "Cartoon",
+      "AnimeMovie"
+    ],
+    "version": 445,
+    "internalName": "StreamPlay",
+    "description": "#1 best extention based on MultiAPI",
+    "url": "https://raw.githubusercontent.com/star884/Mediav2/builds/StreamPlay.cs3",
+    "name": "StreamPlay",
+    "fileHash": "1f523f9b55ac9129abd384ae6890c80bf845d520804343b28a9f8ef86e89c4b0"
+  }
+]
